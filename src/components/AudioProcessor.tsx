@@ -86,16 +86,17 @@ const AudioProcessor: React.FC<AudioProcessorProps> = ({ onContentDetected }) =>
 
     const handleTextAnalysis = async (text: string) => {
         const cleanText = text.trim();
-        if (!cleanText || cleanText.length < 5 || cleanText === lastAnalyzedText.current) return;
+        // Lowered threshold to catch short references like "Ps 23"
+        if (!cleanText || cleanText.length < 3 || cleanText === lastAnalyzedText.current) return;
 
         lastAnalyzedText.current = cleanText;
-        console.log(`[VOICE] Analyzing text: "${cleanText}"`);
-        setLastAILog(`Analyzing: "${cleanText.substring(0, 30)}..."`);
+        console.log(`[VOICE] Analyzing: "${cleanText}"`);
+        setLastAILog(`AI Checking: "${cleanText.substring(0, 30)}..."`);
 
         setIsAnalyzing(true);
         try {
             const result = await analyzeText(cleanText);
-            console.log("[VOICE] AI Result:", result);
+            console.log("[VOICE] AI Analysis Result:", result);
 
             if (result) {
                 if (result.type === 'noise') {

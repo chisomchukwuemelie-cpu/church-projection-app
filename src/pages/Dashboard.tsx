@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useProjection } from '../context/ProjectionContext';
 import type { ProjectionItem } from '../context/ProjectionContext';
 import AudioProcessor from '../components/AudioProcessor';
-import { Monitor, Play, Type, Image as ImageIcon, XCircle, Trash2, Palette, Settings, Mic, Search, Music, Book, Plus } from 'lucide-react';
+import { Monitor, Play, Type, Image as ImageIcon, Trash2, Palette, Settings, Mic, Search, Music, Book, Plus } from 'lucide-react';
 import type { DetectedContent } from '../services/gemini';
 import { searchBible, type BibleVerse } from '../services/BibleService';
 import { getSongs, saveSong, deleteSong, type Song } from '../services/SongService';
@@ -17,7 +17,6 @@ const Dashboard: React.FC = () => {
     const [selectedTheme, setSelectedTheme] = useState<'NONE' | 'BG_BLUE' | 'BG_MOUNTAINS'>('NONE');
     const [autoStage, setAutoStage] = useState(true);
     const [autoLive, setAutoLive] = useState(true);
-    const [lastError, setLastError] = useState<string | null>(null);
 
     // Settings Ref for stale closure prevention (critical for Voice AI)
     const settingsRef = useRef({ autoLive, autoStage, selectedTheme });
@@ -89,7 +88,54 @@ const Dashboard: React.FC = () => {
             });
         }
 
-        // 3. BIBLE FETCHING (If needed)
+        // 3. BIBLE QUOTE SEARCH (If quote detected without reference)
+        if (detected.type === 'quote' && detected.content) {
+            addLog(`Quote detected: "${detected.content.substring(0, 30)}..."`);
+            addLog(`Searching for Bible reference...`);
+            try {
+                setLastError(null);
+                // Search using the quote text
+                const verses = await searchBible(detected.content);
+                if (verses && verses.length > 0) {
+                    // Found it! Convert to scripture
+                    detected.type = 'scripture';
+                    detected.reference = verses[0].reference;
+                    detected.content = verses.map(v => v.text).join(' ');
+                    addLog(`Found reference: ${detected.reference}`);
+
+                    // Update history
+                    setStreamHistory(prev => prev.map(item =>
+                        (item.type === 'quote' && item.content === detected.content)
+                            ? { ...item, type: 'scripture', reference: detected.reference, content: detected.content }
+                            : item
+                    ));
+
+                    // Update Stage
+                    if (currentAutoStage) promoteDetectedToStage(detected);
+
+                    // Push Live
+                    if (currentAutoLive) {
+                        addLog(`Broadcasting: ${detected.reference}`);
+                        setLiveItem({
+                            type: 'scripture',
+                            content: detected.content,
+                            title: detected.reference,
+                            theme: { background: currentTheme }
+                        });
+                    }
+                    return;
+                } else {
+                    addLog(`Quote not found in Bible API - displaying as text`);
+                    // Couldn't find it, display the quote as-is
+                    detected.title = 'Bible Quote (Reference Unknown)';
+                }
+            } catch (e: any) {
+                addLog(`Quote search error: ${e.message}`);
+                detected.title = 'Bible Quote';
+            }
+        }
+
+        // 4. BIBLE FETCHING (If scripture reference needs content)
         if (detected.type === 'scripture' && (!detected.content || detected.content.length < 10) && detected.reference) {
             addLog(`Bible Query: ${detected.reference}`);
             try {
@@ -120,22 +166,23 @@ const Dashboard: React.FC = () => {
                     return;
                 } else {
                     addLog(`Error: Verse ${detected.reference} not found in KJV.`);
-                    setLastError(`KJV not found for ${detected.reference}`);
                 }
             } catch (e: any) {
                 addLog(`Bible API Error: ${e.message}`);
-                setLastError(`API Error: ${e.message}`);
             }
         }
 
-        // 4. IMMEDIATE PUSH (Lyrics or already-filled scriptures)
+        // 5. IMMEDIATE PUSH (Lyrics, quotes, or already-filled scriptures)
         if (detected.content) {
             if (currentAutoLive) {
-                addLog(`Broadcasting: ${detected.reference || 'Lyrics'}`);
+                const title = detected.reference ||
+                    (detected.type === 'lyrics' ? 'Song Lyrics' :
+                        detected.type === 'quote' ? 'Bible Quote' : 'Text');
+                addLog(`Broadcasting: ${title}`);
                 setLiveItem({
                     type: detected.type as any,
                     content: detected.content,
-                    title: detected.reference || (detected.type === 'lyrics' ? 'Song Lyrics' : 'Text'),
+                    title: title,
                     theme: { background: currentTheme }
                 });
             }
@@ -225,22 +272,6 @@ const Dashboard: React.FC = () => {
                 </div>
 
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                    {lastError && (
-                        <div style={{
-                            backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                            border: '1px solid #ef4444',
-                            color: '#fca5a5',
-                            padding: '4px 12px',
-                            borderRadius: '6px',
-                            fontSize: '0.75rem',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '6px'
-                        }}>
-                            <XCircle size={14} /> {lastError}
-                            <button onClick={() => setLastError(null)} style={{ background: 'transparent', border: 'none', color: '#fca5a5', cursor: 'pointer', padding: 0 }}>✕</button>
-                        </div>
-                    )}
                     <button onClick={() => {
                         addLog("TEST: Simulating scripture detection (John 3:16)");
                         handleContentDetected({ type: 'scripture', reference: 'John 3:16' });
@@ -606,12 +637,9 @@ const Dashboard: React.FC = () => {
                         )}
 
                         {!projectorActive && (
-                            <div style={{ position: 'absolute', bottom: '20px', left: '50%', transform: 'translateX(-50%)', backgroundColor: 'rgba(239, 68, 68, 0.9)', color: 'white', padding: '10px 20px', borderRadius: '8px', fontSize: '0.85rem', fontWeight: 600, boxShadow: '0 10px 25px rgba(0,0,0,0.5)', zIndex: 100, display: 'flex', alignItems: 'center', gap: '10px', border: '1px solid #ef4444' }}>
-                                <XCircle size={18} />
-                                <div>
-                                    Projector window not detected. Click "Open Projector" to sync.
-                                    <div style={{ fontSize: '0.7rem', opacity: 0.8, fontWeight: 400 }}>Ensure both windows are on the same URL: {window.location.host}</div>
-                                </div>
+                            <div style={{ position: 'absolute', bottom: '20px', left: '50%', transform: 'translateX(-50%)', backgroundColor: 'rgba(15, 23, 42, 0.9)', color: '#94a3b8', padding: '8px 16px', borderRadius: '8px', fontSize: '0.75rem', fontWeight: 500, boxShadow: '0 4px 12px rgba(0,0,0,0.5)', zIndex: 100, display: 'flex', alignItems: 'center', gap: '8px', border: '1px solid rgba(255,255,255,0.1)' }}>
+                                <div style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#ef4444' }} />
+                                Projector Link Offline
                             </div>
                         )}
                     </div>
@@ -679,7 +707,7 @@ const Dashboard: React.FC = () => {
 
                     <div style={{ padding: '20px', borderTop: '1px solid rgba(255,255,255,0.05)', marginTop: 'auto', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                         <button onClick={() => setLiveItem(null)} className="glass-panel" style={{ padding: '12px', backgroundColor: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)', color: '#fca5a5', borderRadius: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', transition: 'all 0.2s' }}>
-                            <XCircle size={20} /> <span style={{ fontSize: '0.75rem', fontWeight: 600 }}>Clear Live</span>
+                            <Play size={20} style={{ transform: 'rotate(90deg)' }} /> <span style={{ fontSize: '0.75rem', fontWeight: 600 }}>Clear Live</span>
                         </button>
                         <button onClick={() => alert("Logo feature coming soon")} className="glass-panel" style={{ padding: '12px', color: '#94a3b8', borderRadius: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', transition: 'all 0.2s' }}>
                             <ImageIcon size={20} /> <span style={{ fontSize: '0.75rem', fontWeight: 600 }}>Quick Logo</span>

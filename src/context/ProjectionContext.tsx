@@ -29,10 +29,23 @@ export const ProjectionProvider = ({ children }: { children: ReactNode }) => {
     const [channel, setChannel] = useState<BroadcastChannel | null>(null);
     const isProjectorWindow = window.location.pathname === '/projector';
 
+    const [lastHeartbeat, setLastHeartbeat] = useState<number>(0);
+
     const addLog = useCallback((msg: string) => {
         const timestamp = new Date().toLocaleTimeString();
         setSystemLogs(prev => [`[${timestamp}] ${msg}`, ...prev].slice(0, 10));
     }, []);
+
+    // Monitor heartbeat to decide if projector is active
+    useEffect(() => {
+        const checkActive = setInterval(() => {
+            const now = Date.now();
+            const isActive = now - lastHeartbeat < 12000; // 12 seconds tolerance (pings are every 5s)
+            setProjectorActive(isActive);
+        }, 2000);
+
+        return () => clearInterval(checkActive);
+    }, [lastHeartbeat]);
 
     useEffect(() => {
         const bc = new BroadcastChannel('church_channel');
@@ -45,8 +58,7 @@ export const ProjectionProvider = ({ children }: { children: ReactNode }) => {
                     bc.postMessage({ type: 'HEARTBEAT_REPLY' });
                 }
             } else if (event.data.type === 'HEARTBEAT_REPLY') {
-                setProjectorActive(true);
-                setTimeout(() => setProjectorActive(false), 2000); // Pulse indicator
+                setLastHeartbeat(Date.now());
             } else if (event.data.type === 'PING') {
                 if (isProjectorWindow) bc.postMessage({ type: 'HEARTBEAT_REPLY' });
             }
