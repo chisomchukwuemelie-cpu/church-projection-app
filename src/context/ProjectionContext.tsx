@@ -1,5 +1,5 @@
 
-import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react';
 
 export type ProjectionItem = {
     type: 'scripture' | 'lyrics' | 'text' | 'image' | 'video';
@@ -15,14 +15,24 @@ type ProjectionContextType = {
     liveItem: ProjectionItem | null;
     setLiveItem: (item: ProjectionItem | null) => void;
     isProjectorWindow: boolean;
+    projectorActive: boolean;
+    systemLogs: string[];
+    addLog: (msg: string) => void;
 };
 
 const ProjectionContext = createContext<ProjectionContextType | undefined>(undefined);
 
 export const ProjectionProvider = ({ children }: { children: ReactNode }) => {
     const [liveItem, setLiveItemState] = useState<ProjectionItem | null>(null);
+    const [projectorActive, setProjectorActive] = useState(false);
+    const [systemLogs, setSystemLogs] = useState<string[]>([]);
     const [channel, setChannel] = useState<BroadcastChannel | null>(null);
     const isProjectorWindow = window.location.pathname === '/projector';
+
+    const addLog = useCallback((msg: string) => {
+        const timestamp = new Date().toLocaleTimeString();
+        setSystemLogs(prev => [`[${timestamp}] ${msg}`, ...prev].slice(0, 10));
+    }, []);
 
     useEffect(() => {
         const bc = new BroadcastChannel('church_channel');
@@ -31,21 +41,36 @@ export const ProjectionProvider = ({ children }: { children: ReactNode }) => {
         bc.onmessage = (event) => {
             if (event.data.type === 'UPDATE_CONTENT') {
                 setLiveItemState(event.data.payload);
+                if (isProjectorWindow) {
+                    bc.postMessage({ type: 'HEARTBEAT_REPLY' });
+                }
+            } else if (event.data.type === 'HEARTBEAT_REPLY') {
+                setProjectorActive(true);
+                setTimeout(() => setProjectorActive(false), 2000); // Pulse indicator
+            } else if (event.data.type === 'PING') {
+                if (isProjectorWindow) bc.postMessage({ type: 'HEARTBEAT_REPLY' });
             }
         };
 
+        // Regular ping to check connections
+        const pingInterval = setInterval(() => {
+            bc.postMessage({ type: 'PING' });
+        }, 5000);
+
         return () => {
             bc.close();
+            clearInterval(pingInterval);
         };
-    }, []);
+    }, [isProjectorWindow]);
 
     const setLiveItem = (item: ProjectionItem | null) => {
+        addLog(`Pushing content: ${item?.title || 'Clear'}`);
         setLiveItemState(item);
         channel?.postMessage({ type: 'UPDATE_CONTENT', payload: item });
     };
 
     return (
-        <ProjectionContext.Provider value={{ liveItem, setLiveItem, isProjectorWindow }}>
+        <ProjectionContext.Provider value={{ liveItem, setLiveItem, isProjectorWindow, projectorActive, systemLogs, addLog }}>
             {children}
         </ProjectionContext.Provider>
     );

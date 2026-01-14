@@ -5,6 +5,10 @@ import { useProjection } from '../context/ProjectionContext';
 const Projector: React.FC = () => {
     const { liveItem } = useProjection();
 
+    React.useEffect(() => {
+        console.log("DEBUG: Projector received new liveItem:", liveItem);
+    }, [liveItem]);
+
     // IDLE STATE
     if (!liveItem) {
         return (
@@ -37,30 +41,44 @@ const Projector: React.FC = () => {
         color: 'white',
         display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center',
-        padding: '5vw', boxSizing: 'border-box',
+        padding: '8vw', boxSizing: 'border-box',
         overflow: 'hidden',
         transition: 'background 1s ease-in-out'
     };
 
     return (
         <div style={styles}>
-            <div className="animate-fade-in" style={{ textAlign: 'center', maxWidth: '80%' }}>
+            <div className="animate-fade-in" style={{
+                textAlign: 'center',
+                maxWidth: '90%',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '2vh'
+            }}>
                 {liveItem.title && (
-                    <h2 style={{
-                        fontSize: '3vw', marginBottom: '2vh',
-                        color: 'rgba(255,255,255,0.8)', fontWeight: 300,
-                        letterSpacing: '0.05em'
+                    <div style={{
+                        fontSize: '3.5vh',
+                        marginBottom: '1vh',
+                        color: 'rgba(255,255,255,0.7)',
+                        fontWeight: 300,
+                        letterSpacing: '0.2em',
+                        textTransform: 'uppercase',
+                        textShadow: '0 2px 4px rgba(0,0,0,0.5)'
                     }}>
                         {liveItem.title}
-                    </h2>
+                    </div>
                 )}
-                <h1 style={{
-                    fontSize: '5vw', lineHeight: '1.2',
-                    fontWeight: '600', textShadow: '0 4px 20px rgba(0,0,0,0.5)',
-                    whiteSpace: 'pre-wrap', fontFamily: 'Outfit, sans-serif'
+                <div style={{
+                    fontSize: liveItem.content.length > 100 ? '7vh' : '9vh',
+                    lineHeight: '1.2',
+                    fontWeight: '700',
+                    textShadow: '0 4px 30px rgba(0,0,0,0.8), 0 2px 10px rgba(0,0,0,0.5)',
+                    whiteSpace: 'pre-wrap',
+                    fontFamily: "'Outfit', 'Inter', sans-serif",
+                    letterSpacing: '-0.01em'
                 }}>
                     {liveItem.content}
-                </h1>
+                </div>
             </div>
         </div>
     );
