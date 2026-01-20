@@ -41,3 +41,38 @@ export const deleteSong = (id: string) => {
     const songs = getSongs().filter(s => s.id !== id);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(songs));
 };
+
+export const searchSongs = (query: string): Song[] => {
+    const cleanQuery = query.toLowerCase().trim();
+    if (!cleanQuery) return [];
+
+    const songs = getSongs();
+    const matches = songs.map(song => {
+        let score = 0;
+        const cleanTitle = song.title.toLowerCase();
+        const cleanLyrics = song.lyrics.toLowerCase();
+
+        // 1. Exact Title Match
+        if (cleanTitle === cleanQuery) score += 100;
+        // 2. Title includes Query ("Grace" -> "Amazing Grace")
+        else if (cleanTitle.includes(cleanQuery)) score += 50;
+        // 2.5 Query includes Title ("Sing Amazing Grace" -> "Amazing Grace")
+        else if (cleanQuery.includes(cleanTitle) && cleanTitle.length > 3) score += 80;
+
+        // 3. Lyrics Lines Match
+        // Check if query appears in lyrics (substring)
+        if (cleanLyrics.includes(cleanQuery)) {
+            score += 20;
+            // Bonus if it matches a whole line start
+            if (cleanLyrics.includes(`\n${cleanQuery}`)) score += 10;
+        }
+
+        return { song, score };
+    });
+
+    // Filter and Sort
+    return matches
+        .filter(m => m.score > 0)
+        .sort((a, b) => b.score - a.score)
+        .map(m => m.song);
+};

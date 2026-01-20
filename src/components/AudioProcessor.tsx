@@ -14,9 +14,49 @@ const AudioProcessor: React.FC<AudioProcessorProps> = ({ onContentDetected }) =>
     const [isAnalyzing, setIsAnalyzing] = useState(false);
 
     const [lastAILog, setLastAILog] = useState<string>("Ready for voice...");
-    const lastAnalyzedText = useRef('');
     const recognitionRef = useRef<any>(null);
     const isListeningRef = useRef(false);
+    const lastAnalysisTime = useRef(0);
+    const lastResultText = useRef('');
+    const lastRollingMatchRef = useRef('');
+
+    const handleTextAnalysis = async (text: string) => {
+        const now = Date.now();
+        const cleanText = text.trim().toLowerCase();
+
+        // 1. DEDUPLICATION: Strict check to prevent double-processing
+        if (!cleanText || cleanText.length < 4) return;
+        if (cleanText === lastResultText.current && (now - lastAnalysisTime.current < 2000)) {
+            return;
+        }
+
+        lastAnalysisTime.current = now;
+        lastResultText.current = cleanText;
+        setTranscript('');
+
+        console.log(`[VOICE] Gemini Analyzing: "${cleanText}"`);
+        setLastAILog(`AI Checking: "${cleanText.substring(0, 30)}..."`);
+
+        setIsAnalyzing(true);
+        try {
+            const result = await analyzeText(cleanText);
+            if (result) {
+                if (result.type === 'noise') {
+                    setLastAILog(`AI ignored: Noise ("${cleanText.substring(0, 15)}")`);
+                } else {
+                    onContentDetected(result);
+                    setTranscript('');
+                    setLastAILog(`AI Found: ${result.type.toUpperCase()} (${result.reference || ''})`);
+                }
+            } else {
+                setLastAILog("AI returned null");
+            }
+        } catch (error: any) {
+            setLastAILog(`AI Error`);
+        } finally {
+            setIsAnalyzing(false);
+        }
+    };
 
     useEffect(() => {
         if (!('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {
@@ -37,7 +77,6 @@ const AudioProcessor: React.FC<AudioProcessorProps> = ({ onContentDetected }) =>
                 currentTranscript += event.results[i][0].transcript;
             }
             setTranscript(currentTranscript);
-            console.log("[VOICE] Live Transcript:", currentTranscript);
 
             if (event.results[event.results.length - 1].isFinal) {
                 handleTextAnalysis(event.results[event.results.length - 1][0].transcript);
@@ -69,55 +108,50 @@ const AudioProcessor: React.FC<AudioProcessorProps> = ({ onContentDetected }) =>
         };
     }, []);
 
-    // Fast-Trigger logic: if no new speech for 500ms, analyze what we have
+    // PEWBEAM + PAUSE UNIFIED TRIGGER
     useEffect(() => {
-        if (!isListening || !transcript || isAnalyzing) return;
+        if (!isListening || isAnalyzing) return;
 
+        const lowerTranscript = transcript.toLowerCase().trim();
+        if (lowerTranscript.length < 4) return;
+
+        // A. SYSTEM COMMANDS
+        if (lowerTranscript.includes("show") && lowerTranscript.includes("logo")) {
+            onContentDetected({ type: 'command', command: 'SHOW_LOGO' });
+            setTranscript('');
+            return;
+        }
+
+        // B. CATCH-ALL ROLLING MATCH
+        const bibleBooks = ['genesis', 'exodus', 'leviticus', 'numbers', 'deuteronomy', 'joshua', 'judges', 'ruth', 'samuel', 'kings', 'chronicles', 'ezra', 'nehemiah', 'esther', 'job', 'psalm', 'proverbs', 'ecclesiastes', 'song', 'isaiah', 'jeremiah', 'lamentations', 'ezekiel', 'daniel', 'hosea', 'joel', 'amos', 'obadiah', 'jonah', 'micah', 'nahum', 'habakkuk', 'zephaniah', 'haggai', 'zechariah', 'malachi', 'matthew', 'mark', 'luke', 'john', 'acts', 'romans', 'corinthians', 'galatians', 'ephesians', 'philippians', 'colossians', 'thessalonians', 'timothy', 'titus', 'philemon', 'hebrews', 'james', 'peter', 'jude', 'revelation'];
+
+        const triggerKeywords = ['chapter', 'verse', 'bible', 'scripture', 'read', 'open to', 'look at'];
+        const bookFound = bibleBooks.find(b => lowerTranscript.includes(b));
+        const keywordFound = triggerKeywords.find(k => lowerTranscript.includes(k));
+
+        if (bookFound || keywordFound) {
+            // Use REF for lastRollingMatch to avoid stale closures and race conditions
+            if (lowerTranscript !== lastRollingMatchRef.current) {
+                const timer = setTimeout(() => {
+                    // One final check: only trigger if the transcript hasn't changed much in the last 400ms
+                    // This "Settling" logic prevents spamming AI during mid-sentence.
+                    handleTextAnalysis(transcript);
+                    lastRollingMatchRef.current = lowerTranscript;
+                }, 600);
+                return () => clearTimeout(timer);
+            }
+        }
+
+        // C. FALLBACK PAUSE TRIGGER
         const timer = setTimeout(() => {
-            if (transcript !== lastAnalyzedText.current && transcript.trim().length > 5) {
-                console.log("[VOICE] Fast-triggering analysis on pause...");
+            if (transcript.length > 5) {
                 handleTextAnalysis(transcript);
                 setTranscript('');
             }
-        }, 500);
+        }, 1500);
 
         return () => clearTimeout(timer);
     }, [transcript, isListening, isAnalyzing]);
-
-    const handleTextAnalysis = async (text: string) => {
-        const cleanText = text.trim();
-        // Lowered threshold to catch short references like "Ps 23"
-        if (!cleanText || cleanText.length < 3 || cleanText === lastAnalyzedText.current) return;
-
-        lastAnalyzedText.current = cleanText;
-        console.log(`[VOICE] Analyzing: "${cleanText}"`);
-        setLastAILog(`AI Checking: "${cleanText.substring(0, 30)}..."`);
-
-        setIsAnalyzing(true);
-        try {
-            const result = await analyzeText(cleanText);
-            console.log("[VOICE] AI Analysis Result:", result);
-
-            if (result) {
-                if (result.type === 'noise') {
-                    console.log("[VOICE] AI classified as NOISE - ignoring");
-                    setLastAILog("AI ignored: Noise/Casual");
-                } else {
-                    console.log(`[VOICE] AI detected ${result.type.toUpperCase()}:`, result.reference || result.content?.substring(0, 30));
-                    setLastAILog(`AI Found: ${result.type.toUpperCase()}${result.reference ? ` (${result.reference})` : ''}`);
-                    onContentDetected(result);
-                }
-            } else {
-                console.warn("[VOICE] AI returned null - possible API error or parsing failure");
-                setLastAILog("AI returned null");
-            }
-        } catch (error: any) {
-            console.error("[VOICE] Analysis Error:", error);
-            setLastAILog(`AI Error: ${error.message || 'Check Key'}`);
-        } finally {
-            setIsAnalyzing(false);
-        }
-    };
 
     const toggleListening = () => {
         if (isListening) {
@@ -132,8 +166,7 @@ const AudioProcessor: React.FC<AudioProcessorProps> = ({ onContentDetected }) =>
                 setIsListening(true);
                 setLastAILog("Listening...");
             } catch (e) {
-                setIsListening(true);
-                isListeningRef.current = true;
+                console.warn("Toggle Error:", e);
             }
         }
     };

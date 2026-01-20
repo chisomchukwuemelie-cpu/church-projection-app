@@ -2,12 +2,13 @@
 import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react';
 
 export type ProjectionItem = {
-    type: 'scripture' | 'lyrics' | 'text' | 'image' | 'video';
+    type: 'scripture' | 'lyrics' | 'text' | 'image' | 'video' | 'logo';
     content: string; // The main text or URL
     title?: string;  // e.g. "John 3:16" or "Song Title"
     theme?: {
-        background?: string; // e.g. "blue", "mountains", "https://..."
-        font?: string;
+        type: 'color' | 'image' | 'video';
+        value: string; // Hex, URL, or CSS gradient
+        overlayOpacity?: number; // 0-1
     };
 };
 
@@ -18,6 +19,7 @@ type ProjectionContextType = {
     projectorActive: boolean;
     systemLogs: string[];
     addLog: (msg: string) => void;
+    checkConnection: () => void;
 };
 
 const ProjectionContext = createContext<ProjectionContextType | undefined>(undefined);
@@ -81,8 +83,13 @@ export const ProjectionProvider = ({ children }: { children: ReactNode }) => {
         channel?.postMessage({ type: 'UPDATE_CONTENT', payload: item });
     };
 
+    const checkConnection = () => {
+        addLog("Manual connection check...");
+        channel?.postMessage({ type: 'PING' });
+    };
+
     return (
-        <ProjectionContext.Provider value={{ liveItem, setLiveItem, isProjectorWindow, projectorActive, systemLogs, addLog }}>
+        <ProjectionContext.Provider value={{ liveItem, setLiveItem, isProjectorWindow, projectorActive, systemLogs, addLog, checkConnection }}>
             {children}
         </ProjectionContext.Provider>
     );

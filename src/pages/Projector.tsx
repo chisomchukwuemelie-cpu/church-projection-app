@@ -26,56 +26,72 @@ const Projector: React.FC = () => {
         );
     }
 
-    // Theme Mapping
-    const getBackground = (bg?: string) => {
-        switch (bg) {
-            case 'BG_BLUE': return 'radial-gradient(circle at center, #1e3a8a, #0f172a)';
-            case 'BG_MOUNTAINS': return 'url("https://images.unsplash.com/photo-1506905925346-21bda4d32df4?q=80&w=2070&auto=format&fit=crop") center/cover no-repeat';
-            default: return 'black'; // Default black
+    // Media Layer Component
+    const renderBackground = () => {
+        const theme = liveItem.theme;
+        if (!theme) return <div style={{ position: 'absolute', inset: 0, background: 'black', zIndex: -1 }} />;
+
+        const style: React.CSSProperties = { position: 'absolute', inset: 0, objectFit: 'cover', width: '100%', height: '100%', zIndex: -1 };
+
+        if (theme.type === 'video') {
+            return (
+                <video
+                    src={theme.value}
+                    autoPlay loop muted playsInline
+                    style={style}
+                />
+            );
         }
+        if (theme.type === 'image') {
+            return <img src={theme.value} alt="bg" style={style} />;
+        }
+        // Color / Gradient
+        return <div style={{ ...style, background: theme.value }} />;
     };
 
-    const styles: React.CSSProperties = {
-        height: '100vh', width: '100vw',
-        background: getBackground(liveItem.theme?.background),
-        color: 'white',
-        display: 'flex', flexDirection: 'column',
-        alignItems: 'center', justifyContent: 'center',
-        padding: '8vw', boxSizing: 'border-box',
-        overflow: 'hidden',
-        transition: 'background 1s ease-in-out'
+    const overlayStyle: React.CSSProperties = {
+        position: 'absolute', inset: 0,
+        backgroundColor: `rgba(0,0,0,${liveItem.theme?.overlayOpacity ?? 0.3})`,
+        zIndex: 0
     };
+
+    if (liveItem.type === 'logo') {
+        return (
+            <div style={{ height: '100vh', background: 'black', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <img src="/logo.png" alt="Logo" style={{ maxHeight: '70vh', maxWidth: '70vw', objectFit: 'contain' }} />
+            </div>
+        );
+    }
 
     return (
-        <div style={styles}>
+        <div style={{ position: 'relative', height: '100vh', width: '100vw', overflow: 'hidden', color: 'white' }}>
+            {/* Layer 0: Media */}
+            {renderBackground()}
+
+            {/* Layer 1: Overlay */}
+            <div style={overlayStyle} />
+
+            {/* Layer 2: Content */}
             <div className="animate-fade-in" style={{
-                textAlign: 'center',
-                maxWidth: '90%',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '2vh'
+                position: 'relative', zIndex: 1,
+                height: '100%', width: '100%',
+                display: 'flex', flexDirection: 'column',
+                alignItems: 'center', justifyContent: 'center',
+                textAlign: 'center', padding: '5vw'
             }}>
                 {liveItem.title && (
                     <div style={{
-                        fontSize: '3.5vh',
-                        marginBottom: '1vh',
-                        color: 'rgba(255,255,255,0.7)',
-                        fontWeight: 300,
-                        letterSpacing: '0.2em',
-                        textTransform: 'uppercase',
-                        textShadow: '0 2px 4px rgba(0,0,0,0.5)'
+                        fontSize: '3.5vh', marginBottom: '2vh', color: 'rgba(255,255,255,0.8)',
+                        fontWeight: 300, letterSpacing: '0.2em', textTransform: 'uppercase'
                     }}>
                         {liveItem.title}
                     </div>
                 )}
                 <div style={{
-                    fontSize: liveItem.content.length > 100 ? '7vh' : '9vh',
-                    lineHeight: '1.2',
-                    fontWeight: '700',
-                    textShadow: '0 4px 30px rgba(0,0,0,0.8), 0 2px 10px rgba(0,0,0,0.5)',
-                    whiteSpace: 'pre-wrap',
-                    fontFamily: "'Outfit', 'Inter', sans-serif",
-                    letterSpacing: '-0.01em'
+                    fontSize: liveItem.content.length > 80 ? '6vh' : '8vh',
+                    lineHeight: '1.2', fontWeight: 700,
+                    textShadow: '0 4px 20px rgba(0,0,0,0.8)',
+                    whiteSpace: 'pre-wrap', fontFamily: "'Outfit', sans-serif"
                 }}>
                     {liveItem.content}
                 </div>
