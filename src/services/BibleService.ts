@@ -37,6 +37,9 @@ const normalizeBookName = (raw: string): string => {
     name = name.replace(/^first\s/, '1 ');
     name = name.replace(/^second\s/, '2 ');
     name = name.replace(/^third\s/, '3 ');
+    name = name.replace(/^1st\s/, '1 ');
+    name = name.replace(/^2nd\s/, '2 ');
+    name = name.replace(/^3rd\s/, '3 ');
     name = name.replace(/^song of songs/, 'song of solomon');
     return name;
 };
@@ -181,20 +184,24 @@ export const searchBible = async (query: string, translation: string = 'kjv'): P
     }
 
     // 3. FALLBACK: BIBLE-API.COM (KJV, WEB, etc.)
-    // Also used if Bolls failed or if translation wasn't supported by Bolls
     try {
         let fallbackTrans = USE_BOLLS.includes(requestedTranslation) ? 'kjv' : requestedTranslation;
 
-        // If we are here, it means Bolls failed or was skipped.
-        // If user asked for AMP/MSG and Bolls failed, bible-api.com likely won't have it either.
-        // So we Force KJV fallback to ensure text matches.
         if (['amp', 'msg', 'niv', 'esv', 'nlt'].includes(requestedTranslation)) {
-            console.warn(`[BIBLE] Forced fallback to KJV for ${requestedTranslation}`);
             fallbackTrans = 'kjv';
         }
 
-        const url = `https://bible-api.com/${encodeURIComponent(query)}?translation=${encodeURIComponent(fallbackTrans)}`;
-        const response = await fetch(url);
+        // Strategy: Try raw query first. If that fails (e.g. weird spacing/chars), try Constructed Reference.
+        let url = `https://bible-api.com/${encodeURIComponent(query)}?translation=${encodeURIComponent(fallbackTrans)}`;
+        let response = await fetch(url);
+
+        // RETRY MECHANISM: If raw query failed but we successfully parsed it, try the clean format "Book Ch:V"
+        if (!response.ok && parsed && parsed.book) {
+            const cleanRef = `${parsed.book} ${parsed.chapter}:${parsed.startVerse}`;
+            console.log(`[BIBLE] Raw query failed. Retrying with clean ref: ${cleanRef}`);
+            url = `https://bible-api.com/${encodeURIComponent(cleanRef)}?translation=${encodeURIComponent(fallbackTrans)}`;
+            response = await fetch(url);
+        }
 
         if (response.ok) {
             const data = await response.json();
@@ -209,7 +216,6 @@ export const searchBible = async (query: string, translation: string = 'kjv'): P
                 }));
                 // Mark fallback if needed
                 if (fallbackTrans !== requestedTranslation) {
-                    // Check if it's a known copyright issue to give a better message
                     const Copyrighted = ['amp', 'msg', 'nlt', 'nkjv'];
                     if (Copyrighted.includes(requestedTranslation)) {
                         verses.forEach((v: any) => v.translation = `KJV (Fallback: ${requestedTranslation.toUpperCase()} is Copyrighted/Unavailable)`);

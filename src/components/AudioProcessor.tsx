@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Mic, MicOff, Activity } from 'lucide-react';
-import { analyzeText } from '../services/gemini';
+import { analyzeText, BIBLE_BOOKS } from '../services/gemini';
 import type { DetectedContent } from '../services/gemini';
 
 interface AudioProcessorProps {
@@ -96,7 +96,9 @@ const AudioProcessor: React.FC<AudioProcessorProps> = ({ onContentDetected }) =>
             console.log("[VOICE] Engine Stopped");
             if (isListeningRef.current) {
                 console.log("[VOICE] Auto-Restarting...");
-                try { recognition.start(); } catch (e) { }
+                setTimeout(() => {
+                    try { recognition.start(); } catch (e) { }
+                }, 200);
             }
         };
 
@@ -123,10 +125,8 @@ const AudioProcessor: React.FC<AudioProcessorProps> = ({ onContentDetected }) =>
         }
 
         // B. CATCH-ALL ROLLING MATCH
-        const bibleBooks = ['genesis', 'exodus', 'leviticus', 'numbers', 'deuteronomy', 'joshua', 'judges', 'ruth', 'samuel', 'kings', 'chronicles', 'ezra', 'nehemiah', 'esther', 'job', 'psalm', 'proverbs', 'ecclesiastes', 'song', 'isaiah', 'jeremiah', 'lamentations', 'ezekiel', 'daniel', 'hosea', 'joel', 'amos', 'obadiah', 'jonah', 'micah', 'nahum', 'habakkuk', 'zephaniah', 'haggai', 'zechariah', 'malachi', 'matthew', 'mark', 'luke', 'john', 'acts', 'romans', 'corinthians', 'galatians', 'ephesians', 'philippians', 'colossians', 'thessalonians', 'timothy', 'titus', 'philemon', 'hebrews', 'james', 'peter', 'jude', 'revelation'];
-
         const triggerKeywords = ['chapter', 'verse', 'bible', 'scripture', 'read', 'open to', 'look at'];
-        const bookFound = bibleBooks.find(b => lowerTranscript.includes(b));
+        const bookFound = BIBLE_BOOKS.find(b => lowerTranscript.includes(b.toLowerCase()));
         const keywordFound = triggerKeywords.find(k => lowerTranscript.includes(k));
 
         if (bookFound || keywordFound) {
@@ -137,7 +137,7 @@ const AudioProcessor: React.FC<AudioProcessorProps> = ({ onContentDetected }) =>
                     // This "Settling" logic prevents spamming AI during mid-sentence.
                     handleTextAnalysis(transcript);
                     lastRollingMatchRef.current = lowerTranscript;
-                }, 600);
+                }, 1200);
                 return () => clearTimeout(timer);
             }
         }

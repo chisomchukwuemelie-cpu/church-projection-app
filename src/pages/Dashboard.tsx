@@ -6,6 +6,7 @@ import { Monitor, Play, Type, Image as ImageIcon, Trash2, Palette, Settings, Mic
 import type { DetectedContent } from '../services/gemini';
 import { searchBible, type BibleVerse } from '../services/BibleService';
 import { getSongs, saveSong, deleteSong, type Song } from '../services/SongService';
+import { THEMES, getThemeByKeyword } from '../services/ThemeService';
 
 const Dashboard: React.FC = () => {
     const { setLiveItem, liveItem, projectorActive, systemLogs, addLog, checkConnection } = useProjection();
@@ -125,6 +126,19 @@ const Dashboard: React.FC = () => {
             } else if (detected.command === 'CLEAR_SCREEN') {
                 addLog("Command: Clearing Screen");
                 setLiveItem(null);
+            } else if (detected.command === 'SET_THEME' && detected.visual) {
+                const matchedTheme = getThemeByKeyword(detected.visual);
+                if (matchedTheme) {
+                    addLog(`Theme Command: Setting theme to ${matchedTheme.name}`);
+                    updateStagedTheme(matchedTheme); // Use helper to update Ref + State
+
+                    // If Auto-Live is ON, update live item's theme too (if exists)
+                    if (currentAutoLive && liveItem) {
+                        setLiveItem({ ...liveItem, theme: matchedTheme });
+                    }
+                } else {
+                    addLog(`Theme Command: Could not find theme for "${detected.visual}"`);
+                }
             }
             return;
         }
@@ -244,13 +258,23 @@ const Dashboard: React.FC = () => {
                 } else {
                     addLog(`Bible API returned no text for ${detected.reference}`);
                     if (currentAutoStage) {
-                        setStagedItem(prev => (prev?.title === displayRef || prev?.title === detected.reference) ? { ...prev, content: 'Text not available.' } : prev);
+                        setStagedItem(prev => {
+                            if ((prev?.title === displayRef || prev?.title === detected.reference) && prev) {
+                                return { ...prev, content: 'Text not available.' };
+                            }
+                            return prev;
+                        });
                     }
                 }
             } catch (e: any) {
                 addLog(`Bible Fetch Error: ${e.message}`);
                 if (currentAutoStage) {
-                    setStagedItem(prev => (prev?.title === displayRef || prev?.title === detected.reference) ? { ...prev, content: 'Error fetching text.' } : prev);
+                    setStagedItem(prev => {
+                        if ((prev?.title === displayRef || prev?.title === detected.reference) && prev) {
+                            return { ...prev, content: 'Error fetching text.' };
+                        }
+                        return prev;
+                    });
                 }
             }
         }
@@ -276,7 +300,7 @@ const Dashboard: React.FC = () => {
                 });
             }
         }
-    }, [setLiveItem, setStreamHistory, setStagedItem, promoteDetectedToStage, addLog, selectedTranslation]); // Added selectedTranslation dependency
+    }, [setLiveItem, setStreamHistory, setStagedItem, promoteDetectedToStage, addLog, selectedTranslation, liveItem]); // Added liveItem dependency
 
     const clearHistory = () => {
         setStreamHistory([]);
@@ -385,6 +409,13 @@ const Dashboard: React.FC = () => {
 
                     <button className="glass-panel" style={{ padding: '8px', borderRadius: '8px', cursor: 'pointer' }}>
                         <Settings size={18} color="#94a3b8" />
+                    </button>
+                    {/* DEBUG BUTTON */}
+                    <button
+                        onClick={() => handleContentDetected({ type: 'scripture', reference: 'Genesis 1:1', translation: 'KJV' })}
+                        style={{ padding: '4px 8px', fontSize: '0.6rem', background: '#334155', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', opacity: 0.5 }}
+                    >
+                        TEST GEN 1:1
                     </button>
                 </div>
             </header>
@@ -702,11 +733,22 @@ const Dashboard: React.FC = () => {
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                             <Palette size={16} color="#64748b" />
                             <div style={{ display: 'flex', gap: '6px' }}>
-                                <button onClick={() => updateStagedTheme({ type: 'color', value: 'black' })} style={{ width: '24px', height: '24px', borderRadius: '4px', background: 'black', border: selectedTheme.value === 'black' ? '2px solid #6366f1' : '1px solid #334155', cursor: 'pointer' }} title="Black" />
-                                <button onClick={() => updateStagedTheme({ type: 'color', value: 'radial-gradient(circle at center, #1e3a8a, #0f172a)' })} style={{ width: '24px', height: '24px', borderRadius: '4px', background: 'radial-gradient(circle, #1e3a8a, #0f172a)', border: selectedTheme.value.includes('1e3a8a') ? '2px solid #6366f1' : '1px solid #334155', cursor: 'pointer' }} title="Deep Blue" />
-                                <button onClick={() => updateStagedTheme({ type: 'image', value: 'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?q=80&w=200&auto=format&fit=crop' })} style={{ width: '24px', height: '24px', borderRadius: '4px', background: 'url("https://images.unsplash.com/photo-1506905925346-21bda4d32df4?q=80&w=200&auto=format&fit=crop") center/cover', border: selectedTheme.type === 'image' ? '2px solid #6366f1' : '1px solid #334155', cursor: 'pointer' }} title="Mountains" />
-                                {/* Video Preset */}
-                                <button onClick={() => updateStagedTheme({ type: 'video', value: 'https://static.vecteezy.com/system/resources/previews/001/803/159/mp4/abstract-blue-liquid-background-free-video.mp4' })} style={{ width: '24px', height: '24px', borderRadius: '4px', background: '#3b82f6', border: selectedTheme.type === 'video' ? '2px solid #6366f1' : '1px solid #334155', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="Video Loop"> <Play size={10} color="white" /> </button>
+                                {Object.values(THEMES).slice(0, 5).map(theme => (
+                                    <button
+                                        key={theme.name}
+                                        onClick={() => updateStagedTheme(theme)}
+                                        style={{
+                                            width: '24px', height: '24px', borderRadius: '4px',
+                                            background: theme.type === 'color' ? theme.value : (theme.type === 'image' ? `url("${theme.value}") center/cover` : '#3b82f6'),
+                                            border: selectedTheme.value === theme.value ? '2px solid #6366f1' : '1px solid #334155',
+                                            cursor: 'pointer',
+                                            display: 'flex', alignItems: 'center', justifyContent: 'center'
+                                        }}
+                                        title={theme.name}
+                                    >
+                                        {theme.type === 'video' && <Play size={10} color="white" />}
+                                    </button>
+                                ))}
                             </div>
                         </div>
                     </div>
