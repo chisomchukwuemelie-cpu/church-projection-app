@@ -336,6 +336,10 @@ export const analyzeText = async (text: string): Promise<DetectedContent | null>
                 finalChapter = parseInt(chStr[0]);
                 finalVerse = parseInt(chStr.slice(1));
               }
+            } else if (chStr.length >= 4) {
+              // 4 digits: "1010" -> "10:10", "1224" -> "12:24"
+              finalChapter = parseInt(chStr.slice(0, 2));
+              finalVerse = parseInt(chStr.slice(2));
             }
             console.log(`[GEMINI] Partial Split: ${chStr} -> ${finalChapter}:${finalVerse}`);
           }
