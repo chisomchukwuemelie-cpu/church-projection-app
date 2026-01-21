@@ -1,100 +1,120 @@
-
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useProjection } from '../context/ProjectionContext';
 
 const Projector: React.FC = () => {
     const { liveItem } = useProjection();
 
-    React.useEffect(() => {
-        console.log("DEBUG: Projector received new liveItem:", liveItem);
+    useEffect(() => {
+        console.log("DEBUG: Projector Live Update:", liveItem);
     }, [liveItem]);
 
-    // IDLE STATE
+    // IDLE STATE (No Live Item)
     if (!liveItem) {
         return (
-            <div style={{
-                height: '100vh', width: '100vw',
-                backgroundColor: 'black', color: '#666',
-                display: 'flex', flexDirection: 'column',
-                alignItems: 'center', justifyContent: 'center',
-                cursor: 'none',
-                fontFamily: 'sans-serif'
-            }}>
-                <h1 style={{ fontSize: '3rem', margin: 0, opacity: 0.5 }}>Lumina</h1>
-                <p style={{ letterSpacing: '2px', textTransform: 'uppercase', opacity: 0.3 }}>Projection Ready</p>
+            <div className="h-screen w-screen bg-black flex flex-col items-center justify-center transition-all duration-1000 ease-in-out">
+                <div className="flex flex-col items-center animate-pulse-slow opacity-80">
+                    {/* Assuming logo is usable on black, adding filter if needed */}
+                    <img
+                        src="/logo.png"
+                        alt="Logo"
+                        className="h-32 w-auto mb-6 object-contain opacity-60"
+                    />
+                    <h1 className="text-3xl text-slate-500 font-light tracking-[0.3em] uppercase">
+                        Welcome
+                    </h1>
+                </div>
             </div>
         );
     }
 
-    // Media Layer Component
+    // THEME RENDERING
     const renderBackground = () => {
         const theme = liveItem.theme;
-        if (!theme) return <div style={{ position: 'absolute', inset: 0, background: 'black', zIndex: -1 }} />;
+        const commonClasses = "absolute inset-0 w-full h-full object-cover transition-all duration-700 ease-in-out -z-10";
 
-        const style: React.CSSProperties = { position: 'absolute', inset: 0, objectFit: 'cover', width: '100%', height: '100%', zIndex: -1 };
+        if (!theme || theme.type === 'color') {
+            return (
+                <div
+                    className={commonClasses}
+                    style={{ backgroundColor: theme?.value || 'black' }}
+                />
+            );
+        }
 
         if (theme.type === 'video') {
             return (
                 <video
+                    key={theme.value} // Key forces reload on new video
                     src={theme.value}
                     autoPlay loop muted playsInline
-                    style={style}
+                    className={commonClasses}
                 />
             );
         }
+
         if (theme.type === 'image') {
-            return <img src={theme.value} alt="bg" style={style} />;
+            return (
+                <img
+                    key={theme.value} // Fade would require double-buffer, this is simple switch
+                    src={theme.value}
+                    alt="bg"
+                    className={commonClasses}
+                />
+            );
         }
-        // Color / Gradient
-        return <div style={{ ...style, background: theme.value }} />;
+        return <div className="absolute inset-0 bg-black -z-10" />;
     };
 
-    const overlayStyle: React.CSSProperties = {
-        position: 'absolute', inset: 0,
-        backgroundColor: `rgba(0,0,0,${liveItem.theme?.overlayOpacity ?? 0.3})`,
-        zIndex: 0
-    };
-
+    // LOGO OVERRIDE (For "SHOW_LOGO" command)
     if (liveItem.type === 'logo') {
         return (
-            <div style={{ height: '100vh', background: 'black', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <img src="/logo.png" alt="Logo" style={{ maxHeight: '70vh', maxWidth: '70vw', objectFit: 'contain' }} />
+            <div className="h-screen w-screen bg-black flex items-center justify-center animate-fade-in">
+                <img
+                    src="/logo.png"
+                    alt="Logo"
+                    className="max-h-[80vh] max-w-[80vw] object-contain drop-shadow-2xl"
+                />
             </div>
         );
     }
 
+    // MAIN CONTENT PROJECTION
+    const isScripture = liveItem.type === 'scripture';
+
     return (
-        <div style={{ position: 'relative', height: '100vh', width: '100vw', overflow: 'hidden', color: 'white' }}>
-            {/* Layer 0: Media */}
+        <div className="relative h-screen w-screen overflow-hidden text-white selection:bg-indigo-500/30">
+            {/* Background Layer */}
             {renderBackground()}
 
-            {/* Layer 1: Overlay */}
-            <div style={overlayStyle} />
+            {/* Overlay Layer */}
+            <div
+                className="absolute inset-0 bg-black transition-opacity duration-700 z-0"
+                style={{ opacity: liveItem.theme?.overlayOpacity ?? 0.3 }}
+            />
 
-            {/* Layer 2: Content */}
-            <div className="animate-fade-in" style={{
-                position: 'relative', zIndex: 1,
-                height: '100%', width: '100%',
-                display: 'flex', flexDirection: 'column',
-                alignItems: 'center', justifyContent: 'center',
-                textAlign: 'center', padding: '5vw'
-            }}>
+            {/* Content Layer */}
+            <div className="relative z-10 h-full w-full flex flex-col items-center justify-center text-center p-[5vw] transition-all duration-500">
+
+                {/* Title / Reference */}
                 {liveItem.title && (
-                    <div style={{
-                        fontSize: '3.5vh', marginBottom: '2vh', color: 'rgba(255,255,255,0.8)',
-                        fontWeight: 300, letterSpacing: '0.2em', textTransform: 'uppercase'
-                    }}>
+                    <div className={`
+                        mb-[4vh] text-indigo-100/80 font-light tracking-[0.2em] uppercase
+                        transition-all duration-500 transform
+                        ${isScripture ? 'text-[4vh]' : 'text-[3vh]'}
+                    `}>
                         {liveItem.title}
                     </div>
                 )}
-                <div style={{
-                    fontSize: liveItem.content.length > 80 ? '6vh' : '8vh',
-                    lineHeight: '1.2', fontWeight: 700,
-                    textShadow: '0 4px 20px rgba(0,0,0,0.8)',
-                    whiteSpace: 'pre-wrap', fontFamily: "'Outfit', sans-serif"
-                }}>
+
+                {/* Main Text Body */}
+                <div className={`
+                    font-bold leading-tight drop-shadow-xl whitespace-pre-wrap
+                    transition-all duration-500 ease-out
+                    ${liveItem.content.length > 150 ? 'text-[5vh]' : liveItem.content.length > 80 ? 'text-[6vh]' : 'text-[8vh]'}
+                `}>
                     {liveItem.content}
                 </div>
+
             </div>
         </div>
     );

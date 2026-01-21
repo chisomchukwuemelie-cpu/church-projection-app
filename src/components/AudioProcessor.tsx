@@ -129,7 +129,10 @@ const AudioProcessor: React.FC<AudioProcessorProps> = ({ onContentDetected }) =>
         const bookFound = BIBLE_BOOKS.find(b => lowerTranscript.includes(b.toLowerCase()));
         const keywordFound = triggerKeywords.find(k => lowerTranscript.includes(k));
 
-        if (bookFound || keywordFound) {
+        // NEW: If numbers explicitly mentioned, be eager (e.g. "1 1")
+        const hasNumbers = /\d/.test(lowerTranscript) || /\b(one|two|three|four|five|ten)\b/.test(lowerTranscript);
+
+        if (bookFound || keywordFound || hasNumbers) {
             // Use REF for lastRollingMatch to avoid stale closures and race conditions
             if (lowerTranscript !== lastRollingMatchRef.current) {
                 const timer = setTimeout(() => {
@@ -137,14 +140,17 @@ const AudioProcessor: React.FC<AudioProcessorProps> = ({ onContentDetected }) =>
                     // This "Settling" logic prevents spamming AI during mid-sentence.
                     handleTextAnalysis(transcript);
                     lastRollingMatchRef.current = lowerTranscript;
-                }, 1200);
+                }, 1000); // Slightly faster trigger (1.0s vs 1.2s)
                 return () => clearTimeout(timer);
             }
         }
 
         // C. FALLBACK PAUSE TRIGGER
         const timer = setTimeout(() => {
-            if (transcript.length > 5) {
+            // NEW: Allow short numeric inputs (e.g. "2 8", "1 1") for context navigation
+            const isNumeric = /^\d+(\s|:)\d+$/.test(transcript.trim()) || /^\d+\s+\d+$/.test(transcript.trim());
+
+            if (transcript.length > 5 || (transcript.length >= 3 && isNumeric)) {
                 handleTextAnalysis(transcript);
                 setTranscript('');
             }
@@ -191,13 +197,16 @@ const AudioProcessor: React.FC<AudioProcessorProps> = ({ onContentDetected }) =>
                 color: '#cbd5e1',
                 border: '1px solid rgba(255,255,255,0.05)',
                 fontStyle: transcript ? 'normal' : 'italic',
-                overflow: 'hidden'
+                overflow: 'hidden',
+                transition: 'all 0.2s',
+                borderColor: transcript ? '#3b82f6' : 'rgba(255,255,255,0.05)',
+                boxShadow: transcript ? '0 0 10px rgba(59, 130, 246, 0.2)' : 'none'
             }}>
-                {transcript || "Waiting for speech..."}
+                {transcript || (isListening ? "Listening for scripture..." : "Mic inactive")}
             </div>
 
             <div style={{ fontSize: '0.65rem', color: isAnalyzing ? '#818cf8' : '#64748b', marginBottom: '12px', fontWeight: 600, textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: isListening ? '#10b981' : '#ef4444' }} />
+                <span className={isListening ? "animate-pulse" : ""} style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: isListening ? '#10b981' : '#ef4444' }} />
                 AI Status: {lastAILog}
             </div>
 

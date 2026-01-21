@@ -6,15 +6,31 @@ import { Monitor, Play, Type, Image as ImageIcon, Trash2, Palette, Settings, Mic
 import type { DetectedContent } from '../services/gemini';
 import { searchBible, type BibleVerse } from '../services/BibleService';
 import { getSongs, saveSong, deleteSong, type Song } from '../services/SongService';
-import { THEMES, getThemeByKeyword } from '../services/ThemeService';
+import { getThemeByKeyword, getAllThemes, type Theme } from '../services/ThemeService';
+import SettingsModal from '../components/SettingsModal';
+import MediaModal from '../components/MediaModal';
 
 const Dashboard: React.FC = () => {
     const { setLiveItem, liveItem, projectorActive, systemLogs, addLog, checkConnection } = useProjection();
+
+    const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+    const [isMediaOpen, setIsMediaOpen] = useState(false);
+
+    // Initial Load for Preferences
+    useEffect(() => {
+        // Load stored translation preference
+        const storedTranslation = localStorage.getItem('LUMINA_DEFAULT_TRANSLATION');
+        if (storedTranslation) {
+            setSelectedTranslation(storedTranslation);
+        }
+    }, []);
 
     // -- STATE --
     const [leftTab, setLeftTab] = useState<'STREAM' | 'BIBLE' | 'SONGS'>('STREAM');
     const [streamHistory, setStreamHistory] = useState<DetectedContent[]>([]);
     const [stagedItem, setStagedItem] = useState<ProjectionItem | null>(null);
+    const [availableThemes, setAvailableThemes] = useState<Theme[]>(getAllThemes());
+
     // THEME STATE: Now stores full object
     const [selectedTheme, setSelectedTheme] = useState<{ type: 'color' | 'image' | 'video', value: string }>({ type: 'color', value: 'black' });
 
@@ -366,68 +382,72 @@ const Dashboard: React.FC = () => {
     };
 
     return (
-        <div className="dashboard-container" style={{ height: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#020617', color: '#f8fafc' }}>
+        <div className="h-screen flex flex-col bg-slate-950 text-slate-50 font-sans">
+            {/* SETTINGS MODAL */}
+            <SettingsModal
+                isOpen={isSettingsOpen}
+                onClose={() => setIsSettingsOpen(false)}
+                currentTranslation={selectedTranslation}
+                onSaveTranslation={setSelectedTranslation}
+            />
+
+            <MediaModal
+                isOpen={isMediaOpen}
+                onClose={() => setIsMediaOpen(false)}
+                onRefresh={() => setAvailableThemes(getAllThemes())}
+            />
+
             {/* HEADER */}
-            <header style={{
-                height: '64px', borderBottom: '1px solid rgba(255,255,255,0.1)',
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px',
-                background: 'rgba(15, 23, 42, 0.8)', backdropFilter: 'blur(10px)', zIndex: 10
-            }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                    <div style={{ width: '32px', height: '32px', background: 'linear-gradient(135deg, #6366f1, #a855f7)', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <Monitor size={18} color="white" />
+            <header className="h-16 border-b border-white/10 flex items-center justify-between px-6 bg-slate-900/80 backdrop-blur-md z-10">
+                {/* ... (Logo section unchanged) */}
+                <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-purple-500 rounded-lg flex items-center justify-center shadow-lg shadow-indigo-500/20">
+                        <Monitor size={18} className="text-white" />
                     </div>
                     <div>
-                        <h1 style={{ fontSize: '1.25rem', margin: 0, fontWeight: 800, letterSpacing: '-0.02em' }}>Lumina <span style={{ color: '#6366f1' }}>Pro</span></h1>
+                        <h1 className="text-xl m-0 font-extrabold tracking-tight">Lumina <span className="text-indigo-500">Pro</span></h1>
                     </div>
                 </div>
 
-                <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                    <button onClick={openProjector} className="glass-panel action-button" style={{
-                        padding: '8px 20px', borderRadius: '8px', color: 'white', cursor: 'pointer',
-                        display: 'flex', gap: '8px', alignItems: 'center', fontSize: '0.9rem', fontWeight: 600,
-                        backgroundColor: 'rgba(99, 102, 241, 0.15)', borderColor: 'rgba(99, 102, 241, 0.3)'
-                    }}>
+                <div className="flex gap-3 items-center">
+                    <button onClick={openProjector} className="px-5 py-2 rounded-lg text-white cursor-pointer flex gap-2 items-center text-sm font-semibold bg-indigo-500/15 border border-indigo-500/30 hover:bg-indigo-500/25 transition-colors">
                         <Monitor size={16} /> Open Projector
                     </button>
 
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', background: 'rgba(0,0,0,0.3)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)', cursor: 'pointer' }}
+                    <div
+                        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border cursor-pointer transition-all ${projectorActive ? 'bg-emerald-500/10 border-emerald-500/20 hover:bg-emerald-500/20' : 'bg-red-500/10 border-red-500/20 hover:bg-red-500/20'}`}
                         onClick={() => {
                             checkConnection();
                             addLog("Sending Heartbeat Ping...");
                             if (!projectorActive) {
-                                // If offline, try to wake it up visually
                                 setLiveItem({ type: 'text', content: 'SYNC SIGNAL', title: 'CONNECTION CHECK', theme: { type: 'color', value: '#3b82f6' } });
                             }
                         }}
                     >
-                        <div style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: projectorActive ? '#10b981' : '#ef4444', boxShadow: projectorActive ? '0 0 10px #10b981' : '0 0 10px #ef4444', transition: 'all 0.3s' }} />
-                        <span style={{ fontSize: '0.75rem', fontWeight: 600, color: projectorActive ? '#f1f5f9' : '#fca5a5' }}>
-                            {projectorActive ? 'PROJECTOR ONLINE' : 'OFFLINE (CLICK TO PING)'}
+                        <div className={`w-2.5 h-2.5 rounded-full shadow-[0_0_10px] transition-all ${projectorActive ? 'bg-emerald-500 shadow-emerald-500' : 'bg-red-500 shadow-red-500'}`} />
+                        <span className={`text-xs font-bold ${projectorActive ? 'text-emerald-100' : 'text-red-200'}`}>
+                            {projectorActive ? 'ONLINE' : 'OFFLINE'}
                         </span>
                     </div>
 
-                    <button className="glass-panel" style={{ padding: '8px', borderRadius: '8px', cursor: 'pointer' }}>
-                        <Settings size={18} color="#94a3b8" />
-                    </button>
-                    {/* DEBUG BUTTON */}
                     <button
-                        onClick={() => handleContentDetected({ type: 'scripture', reference: 'Genesis 1:1', translation: 'KJV' })}
-                        style={{ padding: '4px 8px', fontSize: '0.6rem', background: '#334155', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', opacity: 0.5 }}
+                        onClick={() => setIsSettingsOpen(true)}
+                        className="p-2 rounded-lg cursor-pointer hover:bg-white/5 transition-colors"
+                        title="Settings"
                     >
-                        TEST GEN 1:1
+                        <Settings size={18} className="text-slate-400" />
                     </button>
                 </div>
             </header>
 
             {/* MAIN 3-PANE LAYOUT */}
-            <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '320px 1fr 320px', overflow: 'hidden' }}>
+            <div className="flex-1 grid grid-cols-[320px_1fr_320px] overflow-hidden">
 
                 {/* LEFT: STREAM / BIBLE / SONGS */}
-                <div style={{ borderRight: '1px solid rgba(255,255,255,0.05)', display: 'flex', flexDirection: 'column', background: '#020617' }}>
+                <div className="border-r border-white/5 flex flex-col bg-slate-950">
 
                     {/* Tabs */}
-                    <div style={{ display: 'flex', padding: '12px', gap: '4px', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                    <div className="flex p-3 gap-1 border-b border-white/5">
                         <button onClick={() => setLeftTab('STREAM')} style={{ flex: 1, padding: '8px', borderRadius: '6px', border: 'none', background: leftTab === 'STREAM' ? 'rgba(99, 102, 241, 0.2)' : 'transparent', color: leftTab === 'STREAM' ? '#818cf8' : '#64748b', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', transition: 'all 0.2s' }}>
                             <Mic size={16} /> <span style={{ fontSize: '0.65rem' }}>STREAM</span>
                         </button>
@@ -722,20 +742,30 @@ const Dashboard: React.FC = () => {
                 < div style={{ display: 'flex', flexDirection: 'column', backgroundColor: '#0f172a', position: 'relative' }}>
                     <div style={{ padding: '12px 20px', borderBottom: '1px solid rgba(255,255,255,0.05)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'rgba(15, 23, 42, 0.5)' }}>
                         <div style={{ display: 'flex', gap: '8px' }}>
-                            <button className="glass-panel" style={{ padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                <Type size={14} /> Text
+                            <button
+                                onClick={() => promoteToStage('', 'New Text Slide', 'text')}
+                                className="glass-panel"
+                                style={{ padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}
+                                title="Create New Text Slide"
+                            >
+                                <Type size={14} /> New Text
                             </button>
-                            <button className="glass-panel" style={{ padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                <ImageIcon size={14} /> Media
+                            <button
+                                onClick={() => setIsMediaOpen(true)}
+                                className="glass-panel"
+                                style={{ padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}
+                                title="Open Media Manager"
+                            >
+                                <ImageIcon size={14} /> Media Library
                             </button>
                         </div>
 
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                             <Palette size={16} color="#64748b" />
                             <div style={{ display: 'flex', gap: '6px' }}>
-                                {Object.values(THEMES).slice(0, 5).map(theme => (
+                                {availableThemes.slice(0, 8).map(theme => (
                                     <button
-                                        key={theme.name}
+                                        key={theme.id}
                                         onClick={() => updateStagedTheme(theme)}
                                         style={{
                                             width: '24px', height: '24px', borderRadius: '4px',
@@ -749,6 +779,13 @@ const Dashboard: React.FC = () => {
                                         {theme.type === 'video' && <Play size={10} color="white" />}
                                     </button>
                                 ))}
+                                <button
+                                    onClick={() => setIsMediaOpen(true)}
+                                    title="Manage Media"
+                                    style={{ width: '24px', height: '24px', borderRadius: '4px', background: 'rgba(255,255,255,0.05)', border: '1px dashed #334155', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8' }}
+                                >
+                                    <Plus size={14} />
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -764,7 +801,7 @@ const Dashboard: React.FC = () => {
                                 borderRadius: '12px', padding: '48px', display: 'flex', flexDirection: 'column',
                                 justifyContent: 'center', textAlign: 'center', border: '1px solid rgba(255,255,255,0.1)',
                                 boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
-                                position: 'relative', overflow: 'hidden'
+                                position: 'relative', overflowY: 'auto'
                             }}>
                                 {stagedItem.theme?.type === 'video' && (
                                     <video src={stagedItem.theme.value} autoPlay loop muted style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: 0, opacity: 0.6 }} />
