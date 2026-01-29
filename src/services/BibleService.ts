@@ -1,4 +1,5 @@
 
+import { get, set } from './db';
 
 export interface BibleVerse {
     reference: string;
@@ -9,9 +10,8 @@ export interface BibleVerse {
     translation?: string;
 }
 
-const CACHE_KEY = 'bible_cache_v2';
-
 // Bolls.life Book ID Map (Alphabetical/Standard Order)
+// Note: Bolls uses integers. This map helps us convert names to IDs.
 const BOLLS_BOOKS: Record<string, number> = {
     "genesis": 1, "exodus": 2, "leviticus": 3, "numbers": 4, "deuteronomy": 5,
     "joshua": 6, "judges": 7, "ruth": 8, "1 samuel": 9, "2 samuel": 10,
@@ -29,8 +29,9 @@ const BOLLS_BOOKS: Record<string, number> = {
     "jude": 65, "revelation": 66
 };
 
-// Translations that should route to Bolls.life
-const USE_BOLLS = ['niv', 'esv', 'msg', 'amp', 'nlt', 'nasb', 'nkjv'];
+// Translations that should route to Bolls.life (including the ones requested)
+// Translations that should route to Bolls.life (including the ones requested)
+// const USE_BOLLS = ['niv', 'esv', 'msg', 'amp', 'nlt', 'nasb', 'nkjv', 'kjv', 'web'];
 
 const normalizeBookName = (raw: string): string => {
     let name = raw.toLowerCase().trim();
@@ -44,35 +45,46 @@ const normalizeBookName = (raw: string): string => {
     return name;
 };
 
-const getCache = (): Record<string, BibleVerse[]> => {
-    const stored = localStorage.getItem(CACHE_KEY);
-    return stored ? JSON.parse(stored) : {};
-};
+// Helper: Strip HTML tags, leading verses, and artifacts
+const cleanVerseText = (raw: string) => {
+    if (!raw) return "";
 
-const setCache = (key: string, verses: BibleVerse[]) => {
-    const cache = getCache();
-    cache[key] = verses;
-    const keys = Object.keys(cache);
-    if (keys.length > 50) delete cache[keys[0]];
-    localStorage.setItem(CACHE_KEY, JSON.stringify(cache));
+    // 1. Remove HTML tags
+    let text = raw.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
+
+    // 2. Remove leading verse numbers (e.g. "16 ", "16.", "16")
+    text = text.replace(/^[\s\d\.\-\[\]\(\)]+/, '');
+
+    // 3. Remove embedded Strong's numbers (letters+digits e.g. "God430")
+    text = text.replace(/([a-zA-Z])\d+/g, '$1');
+
+    // 4. Remove standalone Strong's numbers (3-5 digits, e.g. " 4250 ", " 35 ") 
+    // We avoid removing single/double digits to preserve things like "12 baskets" or "7 days", 
+    // unless they look very suspicious. But usually Strong's are 3+ digits.
+    text = text.replace(/\b\d{3,5}\b/g, '');
+
+    // 5. Remove footnotes/margin notes usually formatted like "word: or, alternative" or "word: Heb. alternative"
+    // Regex: Match word followed by colon, space, then "or,"/"Heb."/"Gr."/"ie", and text until punctuation or end
+    text = text.replace(/\b\w+:\s+(?:or|Heb|Gr|ie|Chal)\.?\s+[^.]+/gi, '');
+
+    // 6. Clean up multiple spaces created by removals
+    text = text.replace(/\s+/g, ' ').trim();
+
+    return text;
 };
 
 export const searchBible = async (query: string, translation: string = 'kjv'): Promise<BibleVerse[]> => {
     const cleanRef = query.trim().toLowerCase();
-    const requestedTranslation = translation.toLowerCase();
-    const cacheKey = `${cleanRef}_${requestedTranslation}`;
+    const requestedTranslation = translation.toLowerCase(); // e.g. 'niv'
 
-    // 1. CACHE CHECK
-    const cache = getCache();
-    if (cache[cacheKey]) {
-        console.log(`[BIBLE] Cache Hit: ${query} (${translation})`);
-        return cache[cacheKey];
-    }
-
-    console.log(`[BIBLE] Fetching: ${query} (${translation})`);
-
-    // PARSE REFERENCE (Needed for Bolls & Local)
-    const refMatch = cleanRef.match(/^(\d?\s?[a-z\s]+)\s+(?:chapter\s+)?(\d+)[:\s](\d+)(?:-(\d+))?$/i);
+    // 1. PARSE REFERENCE - NOW SUPPORTS "to", "through", "verse", AND SPACE SEPARATORS
+    // Regex breakdown:
+    // Group 1: Book (e.g. "1 John", "Genesis", "Song of Solomon") - lazy match
+    // Group 2: Chapter
+    // Group 3: Start Verse
+    // Group 4: End Verse (Optional, handles "-", "to", "through")
+    // CHANGED: Separator between Chapter and Verse can be colon OR space OR 'v'
+    const refMatch = cleanRef.match(/^(\d?\s?[a-z\s]+?)\s+(?:chapter\s+)?(\d+)(?:\s*[:v\s]\s*|\s+)(\d+)(?:\s*(?:-|to|through)\s*(\d+))?$/i);
     let parsed: { book: string, chapter: number, startVerse: number, endVerse?: number } | null = null;
 
     if (refMatch) {
@@ -82,158 +94,156 @@ export const searchBible = async (query: string, translation: string = 'kjv'): P
             startVerse: parseInt(refMatch[3]),
             endVerse: refMatch[4] ? parseInt(refMatch[4]) : undefined
         };
+    } else {
+        console.warn(`[BIBLE] Could not parse reference: ${query}`);
+        // Fallback for simple search if needed, but for now strict ref mode
     }
 
-    // 1.5 TRY LOCAL JSON (Faster/Offline)
-    // Structure assumed from ThiagoBodruk: Array of books. We need to load standard format.
-    // Actually, loading 5MB JSON on every request is bad. Better to fetch it once or valid checking.
-    // We will try to fetch `/bibles/{translation}.json`
-    try {
-        const localUrl = `/bibles/${requestedTranslation}.json`;
-        const res = await fetch(localUrl, { method: 'HEAD' }); // Check exist
-        if (res.ok) {
-            const jsonRes = await fetch(localUrl);
-            const bibleData = await jsonRes.json();
-            // Assume thiagobodruk structure: [ { name: "Genesis", chapters: [ [ "In the beginning...", "And the earth..." ] ] } ]
-            // Note: chapters are 0-indexed in array usually? Or 1-indexed? ThiagoBodruk: chapters are array of array of strings.
-            if (parsed && Array.isArray(bibleData)) {
-                // Map book name to index or find by name
-                const book = bibleData.find((b: any) => normalizeBookName(b.name).includes(normalizeBookName(parsed!.book)));
-                if (book && book.chapters) {
-                    const chapterIdx = parsed.chapter - 1;
-                    if (book.chapters[chapterIdx]) {
-                        const versesText = book.chapters[chapterIdx]; // Array of strings (verses)
-                        // versesText is array of strings. Index 0 is Verse 1.
-
-                        const results: BibleVerse[] = [];
-                        const start = parsed.startVerse - 1;
-                        const end = parsed.endVerse ? parsed.endVerse - 1 : start;
-
-                        for (let i = start; i <= end; i++) {
-                            if (versesText[i]) {
-                                results.push({
-                                    reference: `${parsed.book} ${parsed.chapter}:${i + 1}`,
-                                    text: versesText[i],
-                                    book_name: parsed.book,
-                                    chapter: parsed.chapter,
-                                    verse: i + 1,
-                                    translation: translation.toUpperCase()
-                                });
-                            }
-                        }
-
-                        if (results.length > 0) {
-                            console.log(`[BIBLE] Local Hit: ${query}`);
-                            setCache(cacheKey, results);
-                            return results;
-                        }
-                    }
-                }
-            }
-        }
-    } catch (e) {
-        // console.log("Local fetch failed or not found", e);
-    }
-
-    // 2. TRY BOLLS.LIFE (For copyrighted versions)
-    if (USE_BOLLS.includes(requestedTranslation) && parsed) {
+    if (parsed) {
         const normalizedBook = normalizeBookName(parsed.book);
         const bookId = BOLLS_BOOKS[normalizedBook];
-        if (bookId) {
-            try {
-                // Fetch whole chapter (Bolls doesn't do range filtering nicely in url)
-                const bollsTrans = requestedTranslation === 'msg' ? 'MSG' : requestedTranslation.toUpperCase();
-                const url = `https://bolls.life/get-chapter/${bollsTrans}/${bookId}/${parsed.chapter}/`;
 
+        // CACHE KEY: Store by CHAPTER (so fetching John 3:16 caches all of John 3)
+        // CACHE KEY: Store by CHAPTER (so fetching John 3:16 caches all of John 3)
+        // VERSION 2: Invalidate old cache to ensure cleaner text
+        const chapterCacheKey = `bible_v2_${requestedTranslation}_${normalizedBook}_${parsed.chapter}`;
+
+        // 2. CHECK CACHE (IndexedDB)
+        try {
+            const cachedChapter = await get(chapterCacheKey);
+            if (cachedChapter && Array.isArray(cachedChapter)) {
+                console.log(`[BIBLE] Cache Hit (IDB): ${query} (${translation})`);
+                // RE-CLEAN on read to ensure even cached data is stripped of artifacts
+                const cleanCached = cachedChapter.map((v: any) => ({ ...v, text: cleanVerseText(v.text) }));
+                return filterVerses(cleanCached, parsed.book, parsed.chapter, parsed.startVerse, parsed.endVerse, translation);
+            }
+        } catch (e) {
+            console.warn("[BIBLE] IDB Read Error", e);
+        }
+
+        // 3. FETCH FROM BOLLS.LIFE
+        if (bookId) {
+            console.log(`[BIBLE] Fetching from Network: ${query} (${translation})`);
+            try {
+                // Determine Bolls translation code
+                let bollsTrans = requestedTranslation.toUpperCase();
+                // Map common aliases if needed, though most match (NIV, ESV, MSG, AMP)
+
+                const url = `https://bolls.life/get-chapter/${bollsTrans}/${bookId}/${parsed.chapter}/`;
                 const response = await fetch(url);
+
                 if (response.ok) {
                     const data = await response.json();
-                    // Validator: Bolls returns an array of verses. If it returned an object or something else, it failed.
                     if (Array.isArray(data)) {
-                        // Filter verses
-                        const relevantVerses = data.filter((v: any) => {
-                            if (parsed!.endVerse) {
-                                return v.verse >= parsed!.startVerse && v.verse <= parsed!.endVerse;
-                            }
-                            return v.verse === parsed!.startVerse;
-                        });
+                        // Format data for storage
+                        // Bolls returns: [{ verse: 1, text: "..." }, ...]
+                        const formattedChapter = data.map((v: any) => ({
+                            verse: v.verse,
+                            text: cleanVerseText(v.text),
+                            book_name: parsed!.book, // Store standardized name or original? usage varies
+                            chapter: parsed!.chapter
+                        }));
 
-                        if (relevantVerses.length > 0) {
-                            const results = relevantVerses.map((v: any) => ({
-                                reference: `${parsed!.book} ${parsed!.chapter}:${v.verse}`,
-                                text: v.text.replace(/<[^>]*>/g, ''), // Strip HTML
-                                book_name: parsed!.book,
-                                chapter: parsed!.chapter,
-                                verse: v.verse,
-                                translation: translation.toUpperCase()
-                            }));
+                        // Store in IDB
+                        await set(chapterCacheKey, formattedChapter);
 
-                            results.forEach((r: any) => {
-                                r.reference = r.reference.replace(/\b\w/g, (c: string) => c.toUpperCase());
-                            });
-
-                            setCache(cacheKey, results);
-                            return results;
-                        }
+                        return filterVerses(formattedChapter, parsed!.book, parsed!.chapter, parsed!.startVerse, parsed!.endVerse, translation);
                     }
+                } else {
+                    console.error(`[BIBLE] Bolls API Error: ${response.status}`);
                 }
             } catch (e) {
-                console.error("[BIBLE] Bolls.life failed, falling back:", e);
+                console.error("[BIBLE] Network Request Failed", e);
             }
         }
     }
 
-    // 3. FALLBACK: BIBLE-API.COM (KJV, WEB, etc.)
+    // 4. FALLBACK: TEXT SEARCH (Bolls.life)
+    // If strict regex failed, we treat it as a text search (e.g. "beholding him")
+    console.log(`[BIBLE] Search Text: "${cleanRef}"`);
     try {
-        let fallbackTrans = USE_BOLLS.includes(requestedTranslation) ? 'kjv' : requestedTranslation;
-
-        if (['amp', 'msg', 'niv', 'esv', 'nlt'].includes(requestedTranslation)) {
-            fallbackTrans = 'kjv';
-        }
-
-        // Strategy: Try raw query first. If that fails (e.g. weird spacing/chars), try Constructed Reference.
-        let url = `https://bible-api.com/${encodeURIComponent(query)}?translation=${encodeURIComponent(fallbackTrans)}`;
-        let response = await fetch(url);
-
-        // RETRY MECHANISM: If raw query failed but we successfully parsed it, try the clean format "Book Ch:V"
-        if (!response.ok && parsed && parsed.book) {
-            const cleanRef = `${parsed.book} ${parsed.chapter}:${parsed.startVerse}`;
-            console.log(`[BIBLE] Raw query failed. Retrying with clean ref: ${cleanRef}`);
-            url = `https://bible-api.com/${encodeURIComponent(cleanRef)}?translation=${encodeURIComponent(fallbackTrans)}`;
-            response = await fetch(url);
-        }
+        const bollsTrans = requestedTranslation.toUpperCase();
+        // Bolls Search API: https://bolls.life/find/KJV/?search=phrase
+        const url = `https://bolls.life/find/${bollsTrans}/?search=${encodeURIComponent(cleanRef)}`;
+        const response = await fetch(url);
 
         if (response.ok) {
             const data = await response.json();
+            // Bolls returns object keys as text or array? 
+            // Format: [{ "pk": 123, "verse": 1, "text": "..." }, ...] or dictionary
+            // Actually Bolls /find/ returns list of { pk, book, chapter, verse, text }
+
+            if (Array.isArray(data) && data.length > 0) {
+                console.log(`[BIBLE] Found ${data.length} matches.`);
+                // Limit to top 10 to avoid overload
+                return data.map((v: any) => {
+                    const bookName = getBookNameFromId(v.book);
+                    return {
+                        reference: `${bookName} ${v.chapter}:${v.verse}`,
+                        text: cleanVerseText(v.text),
+                        book_name: bookName,
+                        chapter: v.chapter,
+                        verse: v.verse,
+                        translation: bollsTrans
+                    };
+                }).filter((v: any) => v.book_name !== "Unknown"); // Filter out Apocrypha/Unmapped books
+            }
+        }
+    } catch (e) {
+        console.error("[BIBLE] Search Error", e);
+    }
+
+    // 5. LAST RESORT (Bible-API.com)
+    // ... (Keep existing bible-api fallback if Bolls fails)
+    try {
+        let fallbackTrans = translation;
+        if (['amp', 'niv', 'msg', 'nlt'].includes(requestedTranslation)) {
+            fallbackTrans = 'kjv';
+        }
+
+        const url = `https://bible-api.com/${encodeURIComponent(query)}?translation=${fallbackTrans}`;
+        const res = await fetch(url);
+        if (res.ok) {
+            const data = await res.json();
             if (data.verses) {
-                const verses = data.verses.map((v: any) => ({
+                return data.verses.map((v: any) => ({
                     reference: `${v.book_name} ${v.chapter}:${v.verse}`,
-                    text: v.text.trim(),
+                    text: cleanVerseText(v.text),
                     book_name: v.book_name,
                     chapter: v.chapter,
                     verse: v.verse,
                     translation: data.translation_identifier || fallbackTrans.toUpperCase()
                 }));
-                // Mark fallback if needed
-                if (fallbackTrans !== requestedTranslation) {
-                    const Copyrighted = ['amp', 'msg', 'nlt', 'nkjv'];
-                    if (Copyrighted.includes(requestedTranslation)) {
-                        verses.forEach((v: any) => v.translation = `KJV (Fallback: ${requestedTranslation.toUpperCase()} is Copyrighted/Unavailable)`);
-                    } else {
-                        verses.forEach((v: any) => v.translation = `${fallbackTrans.toUpperCase()} (Fallback for ${requestedTranslation.toUpperCase()})`);
-                    }
-                }
-
-                setCache(cacheKey, verses);
-                return verses;
             }
         }
-    } catch (e) {
-        console.error("[BIBLE] bible-api.com failed:", e);
-    }
-
-    // 4. LAST RESORT (Network/Labs)
-    // ... (Keep existing labs logic if needed, or remove for cleanliness)
+    } catch (e) { /* ignore */ }
 
     return [];
+};
+
+// Helper: Reverse Map for Bolls Book IDs
+const getBookNameFromId = (id: number): string => {
+    const entry = Object.entries(BOLLS_BOOKS).find(([_, val]) => val === id);
+    return entry ? entry[0].charAt(0).toUpperCase() + entry[0].slice(1) : "Unknown";
+};
+
+// Start is inclusive, End is inclusive
+
+// Start is inclusive, End is inclusive
+const filterVerses = (chapterData: any[], bookName: string, chapter: number, start: number, end: number | undefined, trans: string): BibleVerse[] => {
+    const endV = end || start;
+    const filtered = chapterData.filter(v => v.verse >= start && v.verse <= endV);
+
+    return filtered.map(v => ({
+        reference: `${bookName} ${chapter}:${v.verse}`,
+        text: v.text,
+        book_name: bookName,
+        chapter: chapter,
+        verse: v.verse,
+        translation: trans.toUpperCase()
+    })).map(v => {
+        // Capitalize Book Name First Letter
+        v.reference = v.reference.replace(/\b\w/g, (c) => c.toUpperCase());
+        return v;
+    });
 };

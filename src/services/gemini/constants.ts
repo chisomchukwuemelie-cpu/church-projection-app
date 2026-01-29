@@ -94,5 +94,5 @@ export const BIBLE_HOMOPHONES: Record<string, string> = {
     "revelation": "revelation", "revelations": "revelation"
 };
 
-export const SCRIPTURE_REGEX = /(\d?\s?[a-zA-Z\s]+?)\s+(?:chapter\s+)?(\d+)(?:\s*(?::|v\.?|verse)\s*|\s+)(\d+)(?:\s+(?:in|from|read|version|the|of)*\s*([a-zA-Z\s]+))?/i;
+export const SCRIPTURE_REGEX = /(\d?\s?[a-zA-Z\s]+?)\s+(?:chapter\s+)?(\d+)(?:\s*(?::|v\.?|verse)\s*|\s+)(\d+)(?:\s*(?:-|to|through)\s*(\d+))?(?:\s+(?:in|from|read|version|the|of)*\s*([a-zA-Z\s]+))?/i;
 export const PARTIAL_SCRIPTURE_REGEX = /(\d?\s?[a-zA-Z\s]+?)\s+(?:chapter\s+)?(\d+)(?!\s*[:\d])/i;

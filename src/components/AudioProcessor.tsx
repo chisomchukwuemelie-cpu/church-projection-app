@@ -25,7 +25,8 @@ const AudioProcessor: React.FC<AudioProcessorProps> = ({ onContentDetected }) =>
         const cleanText = text.trim().toLowerCase();
 
         // 1. DEDUPLICATION: Strict check to prevent double-processing
-        if (!cleanText || cleanText.length < 4) return;
+        const hasDigit = /\d/.test(cleanText) || /\b(one|two|three|four|five|ten)\b/.test(cleanText);
+        if (!cleanText || (cleanText.length < 3 && !hasDigit)) return;
         if (cleanText === lastResultText.current && (now - lastAnalysisTime.current < 2000)) {
             return;
         }
@@ -115,7 +116,10 @@ const AudioProcessor: React.FC<AudioProcessorProps> = ({ onContentDetected }) =>
         if (!isListening || isAnalyzing) return;
 
         const lowerTranscript = transcript.toLowerCase().trim();
-        if (lowerTranscript.length < 4) return;
+
+        // Relaxed constraint: Allow length >= 2 if it contains a digit (e.g. "1 1")
+        const hasDigit = /\d/.test(lowerTranscript) || /\b(one|two|three|four|five|ten)\b/.test(lowerTranscript);
+        if (lowerTranscript.length < 3 && !hasDigit) return;
 
         // A. SYSTEM COMMANDS
         if (lowerTranscript.includes("show") && lowerTranscript.includes("logo")) {
@@ -123,6 +127,74 @@ const AudioProcessor: React.FC<AudioProcessorProps> = ({ onContentDetected }) =>
             setTranscript('');
             return;
         }
+
+        // =========================================================================
+        // FAST PATH (No AI Latency)
+        // =========================================================================
+
+        // 1. DIRECT SCRIPTURE: "Bible John 3 16", "Scripture Genesis 1 1", "Turn to..."
+        // Checks for: (Trigger Word) + (Book Name) + (Chapter) + (Verse)
+        const bibleTrigger = /(?:bible|scripture|read|open|look at|turn to|go to|give me)\s+([1-3]?\s?[a-z]+)\s+(\d+)\s*[:\s]\s*(\d+)(?:\s*(?:-|to|through)\s*(\d+))?/i;
+        const bibleMatch = lowerTranscript.match(bibleTrigger);
+
+        // Also check raw "Book Chapter Verse" without trigger if it's super clear (e.g. "John 3 16")
+        // We look for a known book name followed continuously by numbers
+        const strictBiblePattern = new RegExp(`^(${BIBLE_BOOKS.join('|')})\\s+(\\d+)\\s+(\\d+)`, 'i');
+        const strictMatch = lowerTranscript.match(strictBiblePattern);
+
+        if (bibleMatch || strictMatch) {
+            const match = bibleMatch || strictMatch; // Prioritize explicit trigger, fallback to strict
+            if (match) {
+                // Construct reference manually
+                const book = match[1];
+                const chap = match[2];
+                const start = match[3];
+                const end = match[4]; // might be undefined
+                const ref = end ? `${book} ${chap}:${start}-${end}` : `${book} ${chap}:${start}`;
+
+                console.log(`[VOICE] FAST PATH (Bible): ${ref}`);
+                setLastAILog(`⚡ Quick: ${ref}`);
+                onContentDetected({ type: 'scripture', reference: ref, content: 'Fetching...' }); // 'content' acts as placeholder
+                setTranscript('');
+                return;
+            }
+        }
+
+        // 3. CONTEXTUAL NUMBERS/RANGES: "5-7", "5 to 7", "12 8"
+        // Regex: Start with digit, contains digit, dash, or "to", ends with digit.
+        // No letters (except 'to' or 'through').
+        const contextRange = /^(\d+)(?:\s*(?:-|to|through)\s*)(\d+)$/i;
+        const rangeMatch = lowerTranscript.match(contextRange);
+
+        if (rangeMatch && !lowerTranscript.includes("song") && !lowerTranscript.includes("page")) {
+            // This is risky if it's just "1 2" (might be mic check), but let's trust it if length > 3
+            // "5-7" is clearly a range.
+            console.log(`[VOICE] Context Range Detected: "${lowerTranscript}"`);
+
+            if (lowerTranscript !== lastRollingMatchRef.current) {
+                handleTextAnalysis(transcript);
+                lastRollingMatchRef.current = lowerTranscript;
+                return;
+            }
+        }
+
+        // 2. DIRECT SONG: "Song [Title]", "Sing [Lyrics]"
+        const songTrigger = /^(?:song|sing|hymn)\s+(.+)/i;
+        const songMatch = lowerTranscript.match(songTrigger);
+
+        if (songMatch && songMatch[1].length > 3) {
+            const query = songMatch[1].trim();
+            console.log(`[VOICE] FAST PATH (Song): ${query}`);
+            setLastAILog(`⚡ Quick Song: ${query}`);
+            // Assume it's lyrics search if "Sing", title if "Song" - but searchSongs handles both usually
+            onContentDetected({ type: 'lyrics', content: query, title: 'Searching...' });
+            setTranscript('');
+            return;
+        }
+
+        // =========================================================================
+        // SLOW PATH (AI Analysis)
+        // =========================================================================
 
         // B. CATCH-ALL ROLLING MATCH
         const triggerKeywords = ['chapter', 'verse', 'bible', 'scripture', 'read', 'open to', 'look at'];
@@ -140,7 +212,7 @@ const AudioProcessor: React.FC<AudioProcessorProps> = ({ onContentDetected }) =>
                     // This "Settling" logic prevents spamming AI during mid-sentence.
                     handleTextAnalysis(transcript);
                     lastRollingMatchRef.current = lowerTranscript;
-                }, 1000); // Slightly faster trigger (1.0s vs 1.2s)
+                }, 400); // OPTIMIZED: 400ms for speed
                 return () => clearTimeout(timer);
             }
         }
@@ -154,7 +226,7 @@ const AudioProcessor: React.FC<AudioProcessorProps> = ({ onContentDetected }) =>
                 handleTextAnalysis(transcript);
                 setTranscript('');
             }
-        }, 1500);
+        }, 1200); // REDUCED from 1500ms to 1200ms
 
         return () => clearTimeout(timer);
     }, [transcript, isListening, isAnalyzing]);

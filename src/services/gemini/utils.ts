@@ -114,10 +114,10 @@ export const findClosestBook = (input: string): string | null => {
         const bookClean = book.toLowerCase().replace(/[^a-z0-9]/g, '');
         const dist = levenshtein(processedInputFullClean, bookClean);
 
-        let threshold = 2;
-        if (bookClean.length < 4) threshold = 0;
-        else if (bookClean.length <= 6) threshold = 1;
-        else if (bookClean.length > 9) threshold = 3;
+        let threshold = 2; // Default relaxed
+        if (bookClean.length < 4) threshold = 1; // Job -> Jab (1 error allowed)
+        else if (bookClean.length <= 6) threshold = 2; // Hosea -> Hosey (2 errors)
+        else if (bookClean.length > 9) threshold = 4; // Thessalonians -> Thesaloneans (4 errors)
 
         if (dist <= threshold && dist < minDist) {
             minDist = dist;
@@ -144,11 +144,8 @@ export const preprocessText = (text: string): string => {
         return PREPROCESS_MAP[clean] || word;
     }).join(' ');
 
-    // 4. Standardize common church terms
-    processed = processed.replace(/\bbook of\b/g, '');
-    processed = processed.replace(/\bpoint\b/g, ' ');
-    processed = processed.replace(/\bchapter\b/g, ' ');
-    processed = processed.replace(/\bverse\b/g, ' ');
+    // 4. Standardize common church terms & fillers (Robustness)
+    processed = processed.replace(/\b(book of|point|chapter|verse|can you|give me|go to|turn to|please|open|scrolling)\b/g, ' ');
 
     // 5. Connect numbers: "3 16" -> "3:16" but avoid "1 John" -> "1:john"
     // Heuristic: If we see Number + Space + Number, connect them.

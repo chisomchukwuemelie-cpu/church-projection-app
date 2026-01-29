@@ -1,6 +1,6 @@
 
 export type DetectedContent = {
-    type: 'scripture' | 'lyrics' | 'noise' | 'quote' | 'command';
+    type: 'scripture' | 'scripture_search' | 'lyrics' | 'noise' | 'quote' | 'command';
     content?: string;
     reference?: string; // For scriptures
     translation?: string; // e.g., KJV, NIV, AMP

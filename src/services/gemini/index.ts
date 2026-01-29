@@ -4,21 +4,39 @@ import type { DetectedContent } from './types';
 import { BIBLE_BOOKS, BIBLE_CHAPTER_LIMITS, SCRIPTURE_REGEX, PARTIAL_SCRIPTURE_REGEX, TRANSLATION_MAP } from './constants';
 import { preprocessText, findClosestBook } from './utils';
 
-const API_KEY = import.meta.env.VITE_GEMINI_API_KEY || localStorage.getItem('VITE_GEMINI_API_KEY');
+// Safe API Key Retrieval
+declare const process: any;
 
 let genAI: GoogleGenerativeAI | null = null;
 let model: any = null;
 
+const getApiKey = () => {
+    // Vite / Browser
+    if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_GEMINI_API_KEY) {
+        return import.meta.env.VITE_GEMINI_API_KEY;
+    }
+    // Node.js (Test Scripts)
+    if (typeof process !== 'undefined' && process.env && process.env.VITE_GEMINI_API_KEY) {
+        return process.env.VITE_GEMINI_API_KEY;
+    }
+    // LocalStorage Fallback (Browser)
+    if (typeof localStorage !== 'undefined') {
+        return localStorage.getItem('VITE_GEMINI_API_KEY');
+    }
+    return null;
+};
+
 const getModel = () => {
     if (model) return model;
-    if (!API_KEY) {
+    const key = getApiKey();
+    if (!key) {
         console.warn("Gemini API Key missing");
         return null;
     }
     try {
-        genAI = new GoogleGenerativeAI(API_KEY);
+        genAI = new GoogleGenerativeAI(key);
         model = genAI.getGenerativeModel({
-            model: "gemini-1.5-flash",
+            model: "gemini-flash-latest",
             generationConfig: {
                 temperature: 0.1,
                 topP: 0.95,
@@ -65,16 +83,19 @@ export const analyzeText = async (text: string): Promise<DetectedContent | null>
         const bookCandidate = match[1].toLowerCase();
         const chapter = match[2];
         const verse = match[3];
-        // If regex captured a suffix, try to map it too if global check failed
-        if (match[4] && !detectedTranslation) {
-            const potentialTrans = match[4].toLowerCase().trim();
+        const endVerse = match[4]; // Now capture group 4
+        // Check group 5 for translation
+        const suffix = match[5];
+
+        // Combine logic: check suffix first for translation
+        if (suffix && !detectedTranslation) {
+            const potentialTrans = suffix.toLowerCase().trim();
             for (const [key, value] of Object.entries(TRANSLATION_MAP)) {
                 if (potentialTrans.includes(key)) {
                     detectedTranslation = value;
                     break;
                 }
             }
-            // If it's a short 3-4 letter code, assume it's a translation (e.g. "TPT")
             if (!detectedTranslation && potentialTrans.length <= 4) {
                 detectedTranslation = potentialTrans.toUpperCase();
             }
@@ -90,7 +111,7 @@ export const analyzeText = async (text: string): Promise<DetectedContent | null>
 
             // HEURISTIC: Fix STT merging numbers (e.g. "Matthew 148" -> "14:8")
             const maxChapters = BIBLE_CHAPTER_LIMITS[validBook] || 50;
-            if (finalChapter > maxChapters) {
+            if (finalChapter > maxChapters && !endVerse) {
                 const chStr = finalChapter.toString();
                 // If 2 digits (e.g. 45 -> 4:5 if Max 28) or 3 digits (e.g. 148 -> 14:8)
                 if (chStr.length >= 2) {
@@ -115,10 +136,11 @@ export const analyzeText = async (text: string): Promise<DetectedContent | null>
                 }
             }
 
-            console.log(`[GEMINI] Regex Hit: ${validBook} ${finalChapter}:${finalVerse} (${detectedTranslation || 'Def'})`);
+            const refString = endVerse ? `${validBook} ${finalChapter}:${finalVerse}-${endVerse}` : `${validBook} ${finalChapter}:${finalVerse}`;
+            console.log(`[GEMINI] Regex Hit: ${refString} (${detectedTranslation || 'Def'})`);
             return {
                 type: 'scripture',
-                reference: `${validBook} ${finalChapter}:${finalVerse}`, // Use standardized book name
+                reference: refString,
                 translation: detectedTranslation
             };
         }
@@ -226,59 +248,59 @@ export const analyzeText = async (text: string): Promise<DetectedContent | null>
     
     INSTRUCTIONS:
     0. **PRIORITY**: SCRIPTURE DETECTION IS YOUR MAIN GOAL.
-    1. **NOISE TOLERANCE (DISTANT AUDIO)**:
+    1. **NOISE TOLERANCE**:
        - The audio may be distant, faint, or muffled.
-       - DO NOT classify as 'noise' if there is even a 10% chance it is a Bible reference.
+       - **NEVER** classify as 'noise' if you hear a Bible Book Name.
+       - **BIBLE BOOKS WHITELIST**: [${BIBLE_BOOKS.join(', ')}]
+       - If you hear ANY of the above + numbers (e.g. "Habakkuk 2"), IT IS SCRIPTURE.
        - If you hear "Matt 5", assume "Matthew 5". GUESS AGGRESSIVELY.
-    2. **SCRIPTURE**:
-       - Convert ANY "Book + Number" pattern into a Bible reference.
-       - **CONTEXT**: If you hear ONLY numbers (e.g., "12 8" or "One Five") and a LAST DETECTED BOOK exists, use it!
-         - "12 8" (with Last Book: Exodus) -> "Exodus 12:8"
-         - "One Five" (with Last Book: Exodus) -> "Exodus 1:5"
-       - **SMASHED NUMBERS**: Split smashed numbers aggressively if they make sense as Chapter:Verse.
-         - "Genesis 18" -> "Genesis 1:8" (Prefer C:V split over Chapter 18 if ambiguous, unless "Chapter" is said)
-         - "Exodus 15" -> "Exodus 1:5"
+    2. **SCRIPTURE DETECTION**:
+       - **EXPLICIT REFERENCES**:
+         - Convert ANY "Book + Number" pattern into a Bible reference.
+         - "Matthew 6 4" -> "Matthew 6:4"
+         - "John 3 16 to 18" -> "John 3:16-18"
+         - "Genesis 1" -> "Genesis 1:1" (Default to verse 1)
+         - "Jude 5" -> "Jude 1:5" (Single chapter book)
+       - **SEMANTIC/QUOTED SCRIPTURE / SEARCH**:
+         - If the user QUOTES a Bible verse (even partially), return type 'quote'.
+         - "Jesus wept" -> 'quote', content: "Jesus wept"
+         - "The Lord is my shepherd" -> 'quote', content: "The Lord is my shepherd"
+         - "As we keep beholding" -> 'quote', content: "As we keep beholding"
+         - **PARTIAL/INCOMPLETE PHRASES**: 
+         - If the input looks like a cut-off sentence but sounds Biblical, IT IS A QUOTE.
+         - "For God so lo" -> 'quote', content: "For God so lo"
+         - "In the beginnin" -> 'quote', content: "In the beginning"
+         - **RULE**: If the text contains words like "God", "Jesus", "Lord", "Christ", "Beginning", "Heaven", "Earth", "Pray", "Amen" -> IT IS NOT NOISE. Return 'quote' of 'scripture_search'.
+       - **KEYWORD SEARCH**:
+         - for single words like "Hope", "Love", return 'scripture_search'.
+       - **CONTEXTUAL NUMBERS**:
+         - If you hear ONLY numbers (e.g., "12 8" or "One Five") and a LAST DETECTED BOOK exists, use it!
+         - "12 8" (with Last Book: Exodus) -> "Exodus 12:8", type: 'scripture'
+       - **SMASHED NUMBERS**: Split smashed numbers aggressively.
          - "Matthew 64" -> "Matthew 6:4"
-         - "128" (with Last Book) -> "12:8"
-       - "Matthew 6 4" -> "Matthew 6:4"
-       - "Matthew 64" (if you hear it as one number) -> "Matthew 6:4" (Prefer Chapter:Verse split)
-       - "One One" -> "1:1"
-       - "Two Three" -> "2:3"
-       - "One Four Eight" -> "14:8"
-       - "Four Five" -> "4:5"
-       - "Genesis 1" -> "Genesis 1:1" (Default to verse 1)
-       - "Jude 5" -> "Jude 1:5" (Single chapter book)
-       - **PHONETIC CORRECTION**: If you hear a word that sounds like a Bible book followed by numbers, incorrectly transcribed, correct it.
+       - **PHONETIC CORRECTION**: Correct misheard book names.
          - "Math you 5 7" -> "Matthew 5:7"
-         - "Have a cook 2 2" -> "Habakkuk 2:2"
-         - "Filament 1 6" -> "Philemon 1:6"
-       - **CONNECTORS**:
-         - "Matthew 4 and 5" -> "Matthew 4:5" (Assume user meant Chapter:Verse)
-         - "John 3 16" -> "John 3:16"
-       - ALWAYS prefer 'scripture' type if a Bible book is mentioned with numbers.
-       - NEVER return "Chapter:1" if you detect a second number. Assume "4 5" is "4:5".
     3. **COMMANDS**:
-       - "Background mountains", "Change theme to blue" -> 'command': "SET_THEME", 'visual': "mountains/blue"
-       - "Clear screen", "Show logo" -> 'command'.
-    4. **LYRICS**: If it sounds like a song, return 'lyrics'.
+       - "Background mountains" -> 'command': "SET_THEME", 'visual': "mountains"
+       - "Clear screen" -> 'command': "CLEAR_SCREEN"
+    4. **LYRICS**: If it sounds like a song but is NOT a Bible verse, return 'lyrics'.
     5. **NOISE**: 
-       - ONLY return 'noise' if the text is completely gibberish or clearly conversation ("hello mic check").
-       - If you see numbers and a potential book name, IT IS SCRIPTURE. Not noise.
+       - ONLY return 'noise' if the text is completely gibberish (e.g. "mic check", "hello one two").
+       - **NEVER** return 'noise' if the text contains biblical words (God, Jesus, Beginning, etc.). Guess 'scripture_search'.
     
     OUTPUT FORMAT (JSON ONLY):
     {
-      "type": "scripture" | "lyrics" | "command" | "noise",
+      "type": "scripture" | "scripture_search" | "quote" | "lyrics" | "command" | "noise",
       "reference": "John 3:16",
       "translation": "KJV",
-      "content": "Song lyrics here",
-      "command": "SHOW_LOGO" | "CLEAR_SCREEN" | "SET_THEME",
+      "content": "Search phrase or Song lyrics",
+      "command": "SHOW_LOGO",
       "visual": "mountains"
     }
     
-    IMPORTANT:
     - Respond with RAW JSON only.
     - If numbers are mentioned after a book name, assume they are Chapter:Verse even if they are heard as a single number (e.g. "twenty three" -> "2:3").
-    - If you hear "One Fourteen", is it Chapter 1 Verse 14 or Chapter 114? Check if the Bible book even has 114 chapters. If not, it MUST be 1:14.`;
+    - **TRANSLATIONS**: If the user specifies a version (e.g. "in NIV", "reading from The Message"), EXTRACT it.`;
 
         console.log("[GEMINI] Analyzing:", cleanText);
 
@@ -341,6 +363,7 @@ export const analyzeText = async (text: string): Promise<DetectedContent | null>
                         }
 
                         json.reference = `${validBook} ${finalChapter}:${finalVerse}`;
+                        lastBook = validBook; // Update Context from AI Semantic Search too!
                         console.log(`[GEMINI] Standardized AI Reference: ${json.reference}`);
                     } else {
                         console.warn(`[GEMINI] Rejected invalid book from AI: ${bookCandidate}`);

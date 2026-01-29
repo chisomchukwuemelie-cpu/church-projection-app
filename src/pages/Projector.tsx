@@ -8,6 +8,24 @@ const Projector: React.FC = () => {
         console.log("DEBUG: Projector Live Update:", liveItem);
     }, [liveItem]);
 
+    // WAKE LOCK - Keep screen on
+    useEffect(() => {
+        const requestWakeLock = async () => {
+            try {
+                if ('wakeLock' in navigator) {
+                    const wakeLock = await (navigator as any).wakeLock.request('screen');
+                    console.log("Wake Lock is active!");
+                    wakeLock.addEventListener('release', () => {
+                        console.log('Wake Lock was released');
+                    });
+                }
+            } catch (err: any) {
+                console.error(`${err.name}, ${err.message}`);
+            }
+        };
+        requestWakeLock();
+    }, []);
+
     // IDLE STATE (No Live Item)
     if (!liveItem) {
         return (
@@ -108,11 +126,15 @@ const Projector: React.FC = () => {
 
                 {/* Main Text Body */}
                 <div className={`
-                    font-bold leading-tight drop-shadow-xl whitespace-pre-wrap
+                    font-bold leading-tight whitespace-pre-wrap
                     transition-all duration-500 ease-out
                     ${liveItem.content.length > 150 ? 'text-[5vh]' : liveItem.content.length > 80 ? 'text-[6vh]' : 'text-[8vh]'}
-                `}>
-                    {liveItem.content}
+                `}
+                    style={{
+                        textShadow: '0 4px 8px rgba(0,0,0,0.8), 0 2px 4px rgba(0,0,0,0.5)'
+                    }}
+                >
+                    {liveItem.content || <span className="text-white/50 text-[4vh] italic">Content not loaded</span>}
                 </div>
 
             </div>

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useProjection } from '../context/ProjectionContext';
 import type { ProjectionItem } from '../context/ProjectionContext';
 import AudioProcessor from '../components/AudioProcessor';
-import { Monitor, Play, Type, Image as ImageIcon, Trash2, Palette, Settings, Mic, Search, Music, Book, Plus } from 'lucide-react';
+import { Monitor, Play, Type, Image as ImageIcon, Trash2, Palette, Settings, Mic, Search, Music, Book, Plus, Pencil } from 'lucide-react';
 import type { DetectedContent } from '../services/gemini';
 import { searchBible, type BibleVerse } from '../services/BibleService';
 import { getSongs, saveSong, deleteSong, type Song } from '../services/SongService';
@@ -11,7 +11,7 @@ import SettingsModal from '../components/SettingsModal';
 import MediaModal from '../components/MediaModal';
 
 const Dashboard: React.FC = () => {
-    const { setLiveItem, liveItem, projectorActive, systemLogs, addLog, checkConnection } = useProjection();
+    const { setLiveItem, liveItem, projectorActive, addLog, checkConnection } = useProjection();
 
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
     const [isMediaOpen, setIsMediaOpen] = useState(false);
@@ -52,9 +52,11 @@ const Dashboard: React.FC = () => {
     // Song State
     const [songs, setSongs] = useState<Song[]>([]);
     const [isAddingSong, setIsAddingSong] = useState(false);
-    const [newSong, setNewSong] = useState({ title: '', lyrics: '' });
+    const [newSong, setNewSong] = useState<{ id?: string, title: string, lyrics: string }>({ title: '', lyrics: '' });
 
     const streamEndRef = useRef<HTMLDivElement>(null);
+    const songListRef = useRef<HTMLDivElement>(null);
+
 
     // Auto-scroll stream
     useEffect(() => {
@@ -157,6 +159,18 @@ const Dashboard: React.FC = () => {
                 }
             }
             return;
+        }
+
+        // 2.5 SCRIPTURE SEARCH (Fuzzy / Quote)
+        if (detected.type === 'scripture_search' && detected.content) {
+            addLog(`Voice Search: "${detected.content}"`);
+            setLeftTab('BIBLE');
+            setBibleQuery(detected.content);
+            handleBibleSearch(undefined, detected.content);
+            return; // Stop further processing (don't add to stream history yet until result clicked?)
+            // Actually, usually we add to history, but for search we might just want to show results.
+            // Let's NOT return, but let it proceed? No, if we return, it won't add to "stream history", which is fine.
+            // We want the USER to choose from the search results.
         }
 
         // 3. SEARCH SONGS (Autofill Lyrics)
@@ -270,7 +284,7 @@ const Dashboard: React.FC = () => {
                             theme: currentTheme
                         });
                     }
-                    return;
+                    return; // Return after successfully fetching and updating scripture
                 } else {
                     addLog(`Bible API returned no text for ${detected.reference}`);
                     if (currentAutoStage) {
@@ -334,13 +348,20 @@ const Dashboard: React.FC = () => {
     const handleAddSong = () => {
         if (!newSong.title || !newSong.lyrics) return;
         const song: Song = {
-            id: Date.now().toString(),
-            ...newSong
+            id: newSong.id || Date.now().toString(),
+            title: newSong.title,
+            lyrics: newSong.lyrics,
         };
         saveSong(song);
         setSongs(getSongs());
         setIsAddingSong(false);
-        setNewSong({ title: '', lyrics: '' });
+        setNewSong({ title: '', lyrics: '' }); // Clear state
+    };
+
+    const handleEditSong = (song: Song, e: React.MouseEvent) => {
+        e.stopPropagation();
+        setNewSong({ id: song.id, title: song.title, lyrics: song.lyrics });
+        setIsAddingSong(true);
     };
 
     const handleDeleteSong = (id: string, e: React.MouseEvent) => {
@@ -444,7 +465,7 @@ const Dashboard: React.FC = () => {
             <div className="flex-1 grid grid-cols-[320px_1fr_320px] overflow-hidden">
 
                 {/* LEFT: STREAM / BIBLE / SONGS */}
-                <div className="border-r border-white/5 flex flex-col bg-slate-950">
+                <div className="border-r border-white/5 flex flex-col bg-slate-950 overflow-hidden min-h-0">
 
                     {/* Tabs */}
                     <div className="flex p-3 gap-1 border-b border-white/5">
@@ -459,9 +480,9 @@ const Dashboard: React.FC = () => {
                         </button>
                     </div>
 
-                    <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
+                    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
                         {leftTab === 'STREAM' && (
-                            <>
+                            <div className="custom-scrollbar" style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
                                 <AudioProcessor onContentDetected={handleContentDetected} />
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '20px 0 12px 0' }}>
                                     <h3 style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: '#64748b', letterSpacing: '0.1em', margin: 0 }}>Detected Stream</h3>
@@ -570,12 +591,12 @@ const Dashboard: React.FC = () => {
                                     })}
                                     <div ref={streamEndRef} />
                                 </div>
-                            </>
+                            </div>
                         )}
 
                         {
                             leftTab === 'BIBLE' && (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                                <div className="custom-scrollbar" style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
                                     <form onSubmit={handleBibleSearch} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                         <div style={{ display: 'flex', gap: '8px' }}>
                                             <select
@@ -589,153 +610,235 @@ const Dashboard: React.FC = () => {
                                             >
                                                 <option value="KJV" style={{ color: 'black' }}>KJV</option>
                                                 <option value="WEB" style={{ color: 'black' }}>WEB</option>
-                                                <option value="NIV" style={{ color: 'black' }}>NIV</option>
-                                                <option value="AMP" style={{ color: 'black' }}>AMP</option>
-                                                <option value="MSG" style={{ color: 'black' }}>MSG</option>
-                                                <option value="NKJV" style={{ color: 'black' }}>NKJV</option>
                                                 <option value="ESV" style={{ color: 'black' }}>ESV</option>
-                                                <option value="NLT" style={{ color: 'black' }}>NLT</option>
                                             </select>
                                             <input
                                                 type="text"
-                                                placeholder="John 3:16"
                                                 value={bibleQuery}
                                                 onChange={(e) => setBibleQuery(e.target.value)}
-                                                style={{ flex: 1, padding: '8px 12px', borderRadius: '6px', background: 'rgba(30, 41, 59, 0.5)', border: '1px solid rgba(255,255,255,0.1)', color: 'white', fontSize: '0.9rem' }}
+                                                placeholder="Search scripture or phrase..."
+                                                style={{
+                                                    flex: 1, padding: '8px', borderRadius: '6px', background: 'rgba(30, 41, 59, 0.5)',
+                                                    border: '1px solid rgba(255,255,255,0.1)', color: 'white'
+                                                }}
                                             />
-                                            <button type="submit" disabled={isSearchingBible} style={{ padding: '8px', borderRadius: '6px', background: '#6366f1', border: 'none', color: 'white', cursor: 'pointer' }}>
-                                                <Search size={18} />
+                                            <button type="submit" disabled={isSearchingBible} style={{ padding: '8px 12px', background: '#6366f1', border: 'none', borderRadius: '6px', color: 'white', cursor: 'pointer' }}>
+                                                {isSearchingBible ? <Activity size={16} className="animate-spin" /> : <Search size={16} />}
                                             </button>
-                                        </div>
-                                        <div style={{ fontSize: '0.65rem', color: '#64748b', fontStyle: 'italic' }}>
-                                            Note: Some translations (NIV, AMP, etc.) may be limited by copyright and default to KJV if unavailable via public API.
                                         </div>
                                     </form>
 
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                                        {isSearchingBible && <div style={{ textAlign: 'center', fontSize: '0.8rem', color: '#94a3b8' }}>Searching...</div>}
-                                        {bibleResults.map((verse, idx) => (
-                                            <div key={idx}
-                                                onClick={() => promoteToStage(verse.text, verse.reference, 'scripture')}
-                                                style={{ padding: '12px', backgroundColor: 'rgba(30, 41, 59, 0.5)', borderRadius: '10px', cursor: 'pointer', border: '1px solid rgba(255,255,255,0.05)', borderLeft: '4px solid #3b82f6', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
-                                            >
-                                                <div style={{ flex: 1 }}>
-                                                    <div style={{ fontSize: '0.7rem', color: '#64748b', marginBottom: '6px', fontWeight: 600 }}>{verse.reference}</div>
-                                                    <div style={{ fontSize: '0.85rem', color: '#cbd5e1', lineHeight: '1.4' }}>{verse.text}</div>
-                                                </div>
-                                                <button
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        setLiveItem({ type: 'scripture', content: verse.text, title: verse.reference, theme: selectedTheme });
+                                        {bibleResults.length > 0 ? (
+                                            bibleResults.map((verse, i) => (
+                                                <div
+                                                    key={i}
+                                                    onClick={() => promoteToStage(verse.text, `${verse.reference} (${verse.translation})`, 'scripture')}
+                                                    className="group hover:bg-slate-800/50 transition-colors"
+                                                    style={{
+                                                        padding: '12px',
+                                                        background: 'rgba(15, 23, 42, 0.3)',
+                                                        borderRadius: '8px',
+                                                        border: '1px solid rgba(255,255,255,0.05)',
+                                                        cursor: 'pointer',
+                                                        display: 'flex', flexDirection: 'column', gap: '4px'
                                                     }}
-                                                    style={{ background: 'rgba(59, 130, 246, 0.2)', border: '1px solid #3b82f6', color: '#3b82f6', padding: '4px', borderRadius: '4px', cursor: 'pointer', marginLeft: '8px' }}
-                                                    title="Go Live"
                                                 >
-                                                    <Play size={14} fill="currentColor" />
-                                                </button>
-                                            </div>
-                                        ))}
-                                    </div>
-                                    {
-                                        !isSearchingBible && bibleResults.length === 0 && bibleQuery && (
-                                            <div style={{ textAlign: 'center', fontSize: '0.8rem', color: '#475569', marginTop: '20px' }}>No results found</div>
-                                        )
-                                    }
-                                </div>
-                            )}
-
-                        {
-                            leftTab === 'SONGS' && (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                                    <button onClick={() => setIsAddingSong(!isAddingSong)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '10px', borderRadius: '8px', border: '1px dashed #334155', background: 'transparent', color: '#94a3b8', cursor: 'pointer', fontSize: '0.85rem' }}>
-                                        <Plus size={16} /> Add New Song
-                                    </button>
-
-                                    {isAddingSong && (
-                                        <div style={{ padding: '12px', background: 'rgba(30, 41, 59, 0.5)', borderRadius: '10px', border: '1px solid #6366f133', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                                            <input
-                                                type="text"
-                                                placeholder="Song Title"
-                                                value={newSong.title}
-                                                onChange={(e) => setNewSong({ ...newSong, title: e.target.value })}
-                                                style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.1)', padding: '8px', borderRadius: '4px', color: 'white' }}
-                                            />
-                                            <textarea
-                                                placeholder="Lyrics..."
-                                                rows={4}
-                                                value={newSong.lyrics}
-                                                onChange={(e) => setNewSong({ ...newSong, lyrics: e.target.value })}
-                                                style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.1)', padding: '8px', borderRadius: '4px', color: 'white', resize: 'vertical' }}
-                                            />
-                                            <div style={{ display: 'flex', gap: '8px' }}>
-                                                <button onClick={handleAddSong} style={{ flex: 1, padding: '8px', background: '#6366f1', border: 'none', borderRadius: '4px', color: 'white', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}>Save</button>
-                                                <button onClick={() => setIsAddingSong(false)} style={{ flex: 1, padding: '8px', background: 'rgba(255,255,255,0.05)', border: 'none', borderRadius: '4px', color: '#94a3b8', cursor: 'pointer', fontSize: '0.8rem' }}>Cancel</button>
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                                        {songs.map(song => (
-                                            <div key={song.id}
-                                                onClick={() => promoteToStage(song.lyrics, song.title, 'lyrics')}
-                                                style={{
-                                                    padding: '12px',
-                                                    backgroundColor: 'rgba(30, 41, 59, 0.8)',
-                                                    borderRadius: '10px',
-                                                    cursor: 'pointer',
-                                                    border: '1px solid rgba(255,255,255,0.1)',
-                                                    borderLeft: '4px solid #10b981',
-                                                    display: 'flex',
-                                                    justifyContent: 'space-between',
-                                                    alignItems: 'center',
-                                                    position: 'relative',
-                                                    overflow: 'hidden'
-                                                }}
-                                            >
-                                                <div style={{ flex: 1, zIndex: 1 }}>
-                                                    <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#f1f5f9' }}>{song.title}</div>
-                                                    <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '4px', display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{song.lyrics}</div>
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                        <span style={{ color: '#818cf8', fontWeight: 600, fontSize: '0.85rem' }}>{verse.reference}</span>
+                                                        <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+                                                            <button
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    setLiveItem({ type: 'scripture', content: verse.text, title: `${verse.reference} (${verse.translation})`, theme: selectedTheme });
+                                                                }}
+                                                                className="p-1 rounded hover:bg-indigo-500/20 text-indigo-400"
+                                                                title="Go Live Instantly"
+                                                            >
+                                                                <Play size={14} />
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                    <p style={{ fontSize: '0.8rem', color: '#cbd5e1', lineHeight: '1.4' }}>{verse.text}</p>
                                                 </div>
-                                                <div style={{ display: 'flex', gap: '4px', zIndex: 2 }}>
-                                                    <button
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            setLiveItem({ type: 'lyrics', content: song.lyrics, title: song.title, theme: selectedTheme });
-                                                        }}
-                                                        style={{ background: 'rgba(16, 185, 129, 0.2)', border: '1px solid #10b981', color: '#10b981', padding: '4px', borderRadius: '4px', cursor: 'pointer' }}
-                                                        title="Go Live"
-                                                    >
-                                                        <Play size={14} fill="currentColor" />
-                                                    </button>
-                                                    <button onClick={(e) => handleDeleteSong(song.id, e)} style={{ background: 'transparent', border: 'none', color: '#475569', cursor: 'pointer', padding: '4px' }}>
-                                                        <Trash2 size={14} />
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        ))}
+                                            ))
+                                        ) : (
+                                            !isSearchingBible && <div style={{ textAlign: 'center', fontSize: '0.8rem', color: '#475569', marginTop: '20px' }}>Enter a reference or phrase</div>
+                                        )}
                                     </div>
                                 </div>
                             )
                         }
-                    </div>
 
-                    {/* SYSTEM LOG PANEL */}
-                    < div className="glass-panel" style={{ marginTop: 'auto', padding: '16px', borderRadius: '12px', display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid rgba(255,255,255,0.05)', maxHeight: '200px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                            <h3 style={{ margin: 0, fontSize: '0.7rem', color: '#64748b', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 700 }}>System Console</h3>
-                        </div>
-                        <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.75rem', fontFamily: 'monospace' }}>
-                            {systemLogs.length === 0 ? (
-                                <div style={{ color: '#334155', fontStyle: 'italic' }}>Listening for events...</div>
-                            ) : (
-                                systemLogs.map((log, i) => (
-                                    <div key={i} style={{ color: log.includes('Error') ? '#f87171' : (log.includes('Live') || log.includes('Push')) ? '#34d399' : '#94a3b8', borderBottom: '1px solid rgba(255,255,255,0.02)', paddingBottom: '2px' }}>
-                                        {log}
+                        {
+                            leftTab === 'SONGS' && (
+                                <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden', position: 'relative' }}>
+                                    {/* FIXED HEADER */}
+                                    <div style={{ padding: '16px', borderBottom: '1px solid rgba(255,255,255,0.05)', backgroundColor: 'rgba(15, 23, 42, 0.4)', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                        <div style={{ display: 'flex', gap: '8px' }}>
+                                            <button onClick={() => setIsAddingSong(!isAddingSong)} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '10px', borderRadius: '8px', border: '1px dashed #334155', background: 'transparent', color: '#94a3b8', cursor: 'pointer', fontSize: '0.85rem' }}>
+                                                <Plus size={16} /> {newSong.id ? 'Edit Song' : 'Add New Song'}
+                                            </button>
+
+                                            {/* VISIBLE SCROLL BUTTONS */}
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                                <button
+                                                    onClick={() => songListRef.current?.scrollBy({ top: -200, behavior: 'smooth' })}
+                                                    style={{ width: '36px', height: '18px', background: '#6366f1', border: 'none', borderRadius: '4px 4px 0 0', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white' }}
+                                                    title="Scroll Up"
+                                                >
+                                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="m18 15-6-6-6 6" /></svg>
+                                                </button>
+                                                <button
+                                                    onClick={() => songListRef.current?.scrollBy({ top: 200, behavior: 'smooth' })}
+                                                    style={{ width: '36px', height: '18px', background: '#6366f1', border: 'none', borderRadius: '0 0 4px 4px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white' }}
+                                                    title="Scroll Down"
+                                                >
+                                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6" /></svg>
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        {isAddingSong && (
+                                            <div className="animate-fade-in" style={{ padding: '12px', background: 'rgba(30, 41, 59, 0.8)', borderRadius: '10px', border: '1px solid #6366f133', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                                <input
+                                                    type="text"
+                                                    placeholder="Song Title"
+                                                    value={newSong.title}
+                                                    onChange={(e) => setNewSong({ ...newSong, title: e.target.value })}
+                                                    style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.1)', padding: '8px', borderRadius: '4px', color: 'white' }}
+                                                />
+                                                <textarea
+                                                    placeholder="Lyrics..."
+                                                    rows={4}
+                                                    value={newSong.lyrics}
+                                                    onChange={(e) => setNewSong({ ...newSong, lyrics: e.target.value })}
+                                                    style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.1)', padding: '8px', borderRadius: '4px', color: 'white', resize: 'vertical' }}
+                                                />
+                                                <div style={{ display: 'flex', gap: '8px' }}>
+                                                    <button onClick={handleAddSong} style={{ flex: 1, padding: '8px', background: '#6366f1', border: 'none', borderRadius: '4px', color: 'white', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}>{newSong.id ? 'Update' : 'Save'}</button>
+                                                    <button onClick={() => setIsAddingSong(false)} style={{ flex: 1, padding: '8px', background: 'rgba(255,255,255,0.05)', border: 'none', borderRadius: '4px', color: '#94a3b8', cursor: 'pointer', fontSize: '0.8rem' }}>Cancel</button>
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
-                                ))
-                            )}
-                        </div>
+
+                                    {/* SCROLLABLE LIST CONTAINER WITH SIDEBAR BUTTONS */}
+                                    <div style={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden' }}>
+
+                                        {/* THE LIST */}
+                                        <div
+                                            ref={songListRef}
+                                            className="custom-scrollbar"
+                                            style={{
+                                                flex: 1,
+                                                overflowY: 'auto',
+                                                padding: '16px',
+                                                display: 'flex',
+                                                flexDirection: 'column',
+                                                gap: '10px',
+                                            }}>
+                                            {songs.map(song => (
+                                                <div key={song.id}
+                                                    onClick={() => promoteToStage(song.lyrics, song.title, 'lyrics')}
+                                                    style={{
+                                                        padding: '12px',
+                                                        backgroundColor: 'rgba(30, 41, 59, 0.8)',
+                                                        borderRadius: '10px',
+                                                        cursor: 'pointer',
+                                                        border: '1px solid rgba(255,255,255,0.1)',
+                                                        borderLeft: '4px solid #10b981',
+                                                        display: 'flex',
+                                                        justifyContent: 'space-between',
+                                                        alignItems: 'center',
+                                                        position: 'relative',
+                                                        overflow: 'hidden'
+                                                    }}
+                                                >
+                                                    <div style={{ flex: 1, zIndex: 1, minWidth: 0 }}>
+                                                        <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#ffffff', letterSpacing: '0.01em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginBottom: '2px' }}>{song.title}</div>
+                                                        <div style={{ fontSize: '0.8rem', color: '#cbd5e1', display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{song.lyrics}</div>
+                                                    </div>
+                                                    <div style={{ display: 'flex', gap: '4px', zIndex: 2, marginLeft: '8px' }}>
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                setLiveItem({ type: 'lyrics', content: song.lyrics, title: song.title, theme: selectedTheme });
+                                                            }}
+                                                            style={{ background: 'rgba(16, 185, 129, 0.2)', border: '1px solid #10b981', color: '#10b981', padding: '4px', borderRadius: '4px', cursor: 'pointer' }}
+                                                            title="Go Live"
+                                                        >
+                                                            <Play size={14} fill="currentColor" />
+                                                        </button>
+                                                        <button onClick={(e) => handleEditSong(song, e)} style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '4px' }}>
+                                                            <Pencil size={14} />
+                                                        </button>
+                                                        <button onClick={(e) => handleDeleteSong(song.id, e)} style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '4px' }}>
+                                                            <Trash2 size={14} />
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+
+                                        {/* SIDEBAR SCROLL BUTTONS */}
+                                        <div style={{
+                                            width: '60px',
+                                            borderLeft: '1px solid rgba(255,255,255,0.05)',
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            alignItems: 'center',
+                                            justifyContent: 'center', // Center content vertically
+                                            padding: '8px',
+                                            gap: '20px', // Space between buttons
+                                            backgroundColor: 'rgba(15, 23, 42, 0.4)'
+                                        }}>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center' }}>
+                                                <button
+                                                    onClick={() => songListRef.current?.scrollBy({ top: -300, behavior: 'smooth' })} // Increased scroll amount
+                                                    className="shadow-lg hover:brightness-125 transition-all active:scale-95"
+                                                    style={{
+                                                        width: '48px', height: '48px', borderRadius: '12px',
+                                                        background: '#6366f1', color: 'white',
+                                                        border: '2px solid rgba(255,255,255,0.1)',
+                                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                        cursor: 'pointer'
+                                                    }}
+                                                    title="Scroll Up"
+                                                >
+                                                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="m18 15-6-6-6 6" /></svg>
+                                                </button>
+                                                <span style={{ fontSize: '0.6rem', color: '#64748b', fontWeight: 600 }}>UP</span>
+                                            </div>
+
+                                            {/* Separator Line (Fixed height) */}
+                                            <div style={{ width: '2px', height: '40px', background: 'rgba(255,255,255,0.1)', borderRadius: '2px' }}></div>
+
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center' }}>
+                                                <span style={{ fontSize: '0.6rem', color: '#64748b', fontWeight: 600 }}>DOWN</span>
+                                                <button
+                                                    onClick={() => songListRef.current?.scrollBy({ top: 300, behavior: 'smooth' })}
+                                                    className="shadow-lg hover:brightness-125 transition-all active:scale-95"
+                                                    style={{
+                                                        width: '48px', height: '48px', borderRadius: '12px',
+                                                        background: '#6366f1', color: 'white',
+                                                        border: '2px solid rgba(255,255,255,0.1)',
+                                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                        cursor: 'pointer'
+                                                    }}
+                                                    title="Scroll Down"
+                                                >
+                                                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6" /></svg>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )
+                        }
                     </div >
+
+
                 </div >
 
                 {/* CENTER: STAGING (Editor) */}
